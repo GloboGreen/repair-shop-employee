@@ -44,6 +44,10 @@ const authSlice = createSlice({
       if (t.email && !state.email) state.email = t.email;
       if (t.phone && !state.mobile) state.mobile = t.phone;
       if (t.photoUrl) state.photoUrl = t.photoUrl;
+      // Duty roster times — drive the "CHECK IN / CHECK OUT" pills on the home
+      // header. Stored even when null so a profile update can clear them.
+      state.defaultCheckIn = t.defaultCheckIn ?? state.defaultCheckIn ?? null;
+      state.defaultCheckOut = t.defaultCheckOut ?? state.defaultCheckOut ?? null;
     },
     clearSession() {
       return initialState;

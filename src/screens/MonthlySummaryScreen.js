@@ -10,113 +10,91 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { listMyTickets } from '../api/tickets';
+import { useSelector } from 'react-redux';
+import { ticketApi } from '../api/client';
+import { useTechnicianId } from '../auth/useTechnicianId';
+import { selectSession } from '../store/authSlice';
+import { effectiveLateMinutes } from './DailyAttendanceScreen';
+
+// Monthly Summary = the Attendance Overview card (stat rings + calendar +
+// legend). The day-by-day "Attendance Monthly" list lives on the separate
+// Daily Attendance screen.
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
+const DOW = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 
-const FILTERS = ['All', 'Completed', 'In Process', 'Pending'];
+const STATUS_COLORS = {
+  LEAVE: '#DB2777',
+  LATE: '#EAB308',
+  PERMISSION: '#F97316',
+  WEEK_OFF: '#F472B6',
+  HOLIDAY: '#16A34A',
+};
+const RING_COLORS = {
+  present: '#16A34A',
+  late: '#EAB308',
+  permission: '#F97316',
+  leaves: '#DB2777',
+  holidays: '#1E3A8A',
+};
 
-// Ticket statuses → display buckets used by the cards. Mirrors the owner-side
-// WorkingRecord screen so a technician sees the same "Recent Pending" /
-// "In Process" split they'd see on a manager's screen.
-function bucketize(status) {
-  const s = (status || '').toUpperCase();
-  if (s === 'DELIVERED' || s === 'CANCELLED') return 'COMPLETED';
-  if (s === 'CREATED' || s === 'IN_DIAGNOSIS' || s === 'QUOTED') return 'PENDING';
-  return 'IN_PROCESS';
+function pad2(n) {
+  return String(n).padStart(2, '0');
 }
 
-function formatDate(d) {
-  if (!d) return '—';
-  return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-}
-
-function formatDateTime(instant) {
-  if (!instant) return '—';
-  return new Date(instant).toLocaleString('en-IN', {
-    day: '2-digit', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit',
-  });
-}
-
-function trackingId(t) {
-  return t.trackingId || `CSPEN${String(t.id || '').replace(/[^0-9]/g, '').slice(0, 8) || '——'}`;
-}
-
-function deviceLine(t) {
-  const parts = [];
-  if (t.deviceDisplayName) parts.push(t.deviceDisplayName);
-  if (t.repairServicesSummary) parts.push(t.repairServicesSummary);
-  return parts.join(' - ') || 'Repair ticket';
-}
-
-export default function MonthlySummaryScreen({ navigation }) {
+export default function MonthlySummaryScreen() {
+  const technicianId = useTechnicianId();
+  const session = useSelector(selectSession);
+  const dutyCheckIn = session?.defaultCheckIn || '09:30:00';
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
-  const [list, setList] = useState([]);
+  const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [filter, setFilter] = useState('All');
 
   const load = useCallback(async (isRefresh = false) => {
+    if (!technicianId) return;
     if (isRefresh) setRefreshing(true); else setLoading(true);
     try {
-      const page = await listMyTickets({ page: 0, size: 100 });
-      const items = Array.isArray(page?.content) ? page.content : (Array.isArray(page) ? page : []);
-      setList(items);
+      const res = await ticketApi.get(`/technicians/${technicianId}/attendance`, {
+        query: { month, year },
+      });
+      setData(res);
     } catch {
-      setList([]);
+      setData(null);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [technicianId, month, year]);
 
   React.useEffect(() => { load(); }, [load]);
 
-  // Scope to the picked month so the stats only reflect tickets touched then.
-  const mine = useMemo(() => {
-    return list.filter((b) => {
-      const t = b.updatedAt || b.createdAt;
-      if (!t) return true;
-      const d = new Date(t);
-      return d.getFullYear() === year && d.getMonth() + 1 === month;
-    });
-  }, [list, year, month]);
+  const recordsByDate = useMemo(() => {
+    const map = {};
+    (data?.dailyRecords || []).forEach((r) => { if (r.date) map[r.date] = r; });
+    return map;
+  }, [data]);
 
-  const counts = useMemo(() => {
-    let pending = 0, inProcess = 0, completed = 0;
-    mine.forEach((b) => {
-      const bk = bucketize(b.status);
-      if (bk === 'PENDING') pending += 1;
-      else if (bk === 'COMPLETED') completed += 1;
-      else inProcess += 1;
-    });
-    return { inProcess, pending, completed, total: mine.length };
-  }, [mine]);
-
-  const sortedDesc = useMemo(() => {
-    return [...mine].sort((a, b) => {
-      const at = new Date(a.updatedAt || a.createdAt || 0).getTime();
-      const bt = new Date(b.updatedAt || b.createdAt || 0).getTime();
-      return bt - at;
-    });
-  }, [mine]);
-
-  const recentPending = sortedDesc.find((b) => bucketize(b.status) === 'PENDING');
-  const recentInProcess = sortedDesc.find((b) => bucketize(b.status) === 'IN_PROCESS');
-
-  const previousCompleted = sortedDesc.filter((b) => {
-    const bk = bucketize(b.status);
-    if (filter === 'All') return true;
-    if (filter === 'Completed') return bk === 'COMPLETED';
-    if (filter === 'In Process') return bk === 'IN_PROCESS';
-    if (filter === 'Pending') return bk === 'PENDING';
-    return false;
-  });
+  const grid = useMemo(() => {
+    const first = new Date(year, month - 1, 1);
+    const lastDay = new Date(year, month, 0).getDate();
+    const startOffset = first.getDay();
+    const cells = [];
+    for (let i = 0; i < startOffset; i++) cells.push(null);
+    for (let d = 1; d <= lastDay; d++) {
+      const iso = `${year}-${pad2(month)}-${pad2(d)}`;
+      cells.push({ day: d, iso, record: recordsByDate[iso] || null });
+    }
+    while (cells.length % 7 !== 0) cells.push(null);
+    const weeks = [];
+    for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+    return weeks;
+  }, [year, month, recordsByDate]);
 
   const stepMonth = (delta) => {
     let m = month + delta;
@@ -127,9 +105,83 @@ export default function MonthlySummaryScreen({ navigation }) {
     setYear(y);
   };
 
-  const openTicket = (t) => {
-    navigation.navigate('TechnicianTicketDetail', { ticketId: t.id });
-  };
+  if (!technicianId) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <View style={styles.center}><ActivityIndicator color="#3B4FD7" /></View>
+      </SafeAreaView>
+    );
+  }
+
+  // Aggregate the overview rings from the day-by-day records rather than
+  // trusting backend-supplied totals. Going row-by-row keeps the rings in
+  // lockstep with what the Daily Attendance screen shows for each date —
+  // if the user opens Daily Attendance and counts the LEAVE pills, that
+  // count must match the "Leaves" ring here. Falls back to the backend
+  // summary only when dailyRecords is empty (e.g. months with no data yet).
+  const aggregates = useMemo(() => {
+    const rows = data?.dailyRecords || [];
+    if (rows.length === 0) {
+      return {
+        present: data?.presentDays ?? 0,
+        lateMinutes: null,
+        lateHoursLabel: String(data?.lateHours ?? '0'),
+        permission: data?.permissionCount ?? 0,
+        leaves: data?.leaveDays ?? 0,
+        holidays: data?.holidayCount ?? 0,
+      };
+    }
+    let presentCount = 0;
+    let permissionCount = 0;
+    let leaveCount = 0;
+    let holidayCount = 0;
+    let lateMinutesTotal = 0;
+    rows.forEach((r) => {
+      const status = String(r.status || '').toUpperCase();
+      const hasCheckIn = !!r.checkInTime;
+      if (status === 'LEAVE') leaveCount += 1;
+      else if (status === 'HOLIDAY') holidayCount += 1;
+      else if (status === 'PERMISSION') {
+        permissionCount += 1;
+        if (hasCheckIn) presentCount += 1;
+      } else if (hasCheckIn) {
+        // GENERAL, LATE, or any other "the technician showed up" status
+        // counts as a present day.
+        presentCount += 1;
+      }
+      // Use the same fallback the Daily Attendance card uses so the rings
+       // stay in lockstep with what each day reads — when the backend value
+      // is 0, derive late minutes from the duty start and the check-in time.
+      lateMinutesTotal += effectiveLateMinutes(r, dutyCheckIn);
+    });
+    // Render late as a one-decimal hours value so 30 minutes shows "0.5"
+    // instead of getting truncated to "0".
+    const lateHours = lateMinutesTotal / 60;
+    const lateHoursLabel = lateHours === 0
+      ? '0'
+      : (Math.round(lateHours * 10) / 10).toString();
+    return {
+      present: presentCount,
+      lateMinutes: lateMinutesTotal,
+      lateHoursLabel,
+      permission: permissionCount,
+      leaves: leaveCount,
+      holidays: holidayCount,
+    };
+  }, [data, dutyCheckIn]);
+
+  const present = aggregates.present;
+  const late = aggregates.lateHoursLabel;
+  const permission = aggregates.permission;
+  const leaves = aggregates.leaves;
+  const holidays = aggregates.holidays;
+
+  const lateDays = useMemo(() => {
+    return (data?.dailyRecords || [])
+      .map((r) => ({ ...r, _effectiveLateMinutes: effectiveLateMinutes(r, dutyCheckIn) }))
+      .filter((r) => r._effectiveLateMinutes > 0)
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  }, [data, dutyCheckIn]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -137,9 +189,9 @@ export default function MonthlySummaryScreen({ navigation }) {
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} />}
       >
-        <View style={styles.statsCard}>
-          <View style={styles.statsHeader}>
-            <Text style={styles.statsHeaderTitle}>This Month</Text>
+        <View style={styles.card}>
+          <View style={styles.headerRow}>
+            <Text style={styles.cardTitle}>Attendance{'\n'}Overview</Text>
             <View style={styles.monthPill}>
               <Text style={styles.monthPillText}>{MONTHS[month - 1]} {year}</Text>
               <TouchableOpacity onPress={() => stepMonth(-1)} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
@@ -152,175 +204,193 @@ export default function MonthlySummaryScreen({ navigation }) {
             </View>
           </View>
 
-          <View style={styles.statTilesRow}>
-            <StatTile value={String(counts.inProcess).padStart(2, '0')} label="In Process" hint="Active" icon="sync" bg="#3B4FD7" />
-            <StatTile value={String(counts.pending).padStart(2, '0')} label="Pending" hint="Waiting" icon="alert-circle" bg="#EF4444" />
-            <StatTile value={String(counts.completed).padStart(3, '0')} label="Completed" hint="Finished" icon="checkmark-done" bg="#22C55E" />
-            <StatTile value={String(counts.total).padStart(3, '0')} label="Total" hint="Overall" icon="stats-chart" bg="#7C3AED" />
+          {loading && !data ? (
+            <ActivityIndicator size="large" color="#3B4FD7" style={{ marginVertical: 24 }} />
+          ) : (
+            <>
+              <View style={styles.statRow}>
+                <StatRing value={present} label="Present" color={RING_COLORS.present} />
+                <StatRing value={`${late} Hrs`} label="Late" color={RING_COLORS.late} />
+                <StatRing value={pad2(permission)} label="Permission" color={RING_COLORS.permission} />
+                <StatRing value={pad2(leaves)} label="Leaves" color={RING_COLORS.leaves} />
+                <StatRing value={pad2(holidays)} label="Holidays" color={RING_COLORS.holidays} />
+              </View>
+
+              <View style={styles.calendar}>
+                <View style={styles.calRowHeader}>
+                  {DOW.map((d, i) => (
+                    <Text key={d} style={[styles.calHeaderCell, i === 0 && styles.calHeaderSunday]}>
+                      {d}
+                    </Text>
+                  ))}
+                </View>
+                {grid.map((week, wi) => (
+                  <View key={wi} style={styles.calRow}>
+                    {week.map((cell, ci) => {
+                      if (!cell) return <View key={ci} style={styles.calCell} />;
+                      const isSunday = ci === 0;
+                      const status = (cell.record?.status || '').toUpperCase();
+                      const effectiveStatus = status || (isSunday ? 'WEEK_OFF' : null);
+                      const dotColor = STATUS_COLORS[effectiveStatus];
+                      return (
+                        <View key={ci} style={styles.calCell}>
+                          <Text style={[styles.calCellNum, isSunday && styles.calCellSunday]}>
+                            {cell.day}
+                          </Text>
+                          {dotColor ? <View style={[styles.calDot, { backgroundColor: dotColor }]} /> : null}
+                        </View>
+                      );
+                    })}
+                  </View>
+                ))}
+              </View>
+
+              <View style={styles.legendRow}>
+                {[
+                  ['Leave', STATUS_COLORS.LEAVE],
+                  ['Late', STATUS_COLORS.LATE],
+                  ['Permission', STATUS_COLORS.PERMISSION],
+                  ['Week off', STATUS_COLORS.WEEK_OFF],
+                  ['Holiday', STATUS_COLORS.HOLIDAY],
+                ].map(([label, color]) => (
+                  <View key={label} style={styles.legendItem}>
+                    <View style={[styles.legendDot, { backgroundColor: color }]} />
+                    <Text style={styles.legendText}>{label}</Text>
+                  </View>
+                ))}
+              </View>
+            </>
+          )}
+        </View>
+
+        {!loading && lateDays.length > 0 && (
+          <View style={[styles.card, { marginTop: 12 }]}>
+            <View style={styles.lateHeader}>
+              <View style={styles.lateAccent} />
+              <Text style={styles.cardTitle}>Late Days Breakdown</Text>
+              <View style={styles.lateTotalPill}>
+                <Text style={styles.lateTotalText}>Total {late} Hrs</Text>
+              </View>
+            </View>
+            {lateDays.map((r) => (
+              <View key={r.date} style={styles.lateRow}>
+                <View style={styles.lateRowLeft}>
+                  <Text style={styles.lateRowDate}>{formatLateDate(r.date)}</Text>
+                  <Text style={styles.lateRowSub}>Check-in {formatTime12(r.checkInTime)}</Text>
+                </View>
+                <View style={styles.lateRowPill}>
+                  <Text style={styles.lateRowPillText}>{formatDuration(r._effectiveLateMinutes)}</Text>
+                </View>
+              </View>
+            ))}
           </View>
-        </View>
-
-        {loading && list.length === 0 && (
-          <ActivityIndicator size="small" color="#3B4FD7" style={{ marginVertical: 20 }} />
-        )}
-
-        <Text style={styles.sectionHeader}>Recent Pending</Text>
-        {recentPending ? (
-          <TaskCard booking={recentPending} bucket="PENDING" onPress={() => openTicket(recentPending)} onRefresh={() => load(true)} refreshing={refreshing} />
-        ) : (
-          <Text style={styles.empty}>No pending tasks.</Text>
-        )}
-
-        <Text style={styles.sectionHeader}>In Process</Text>
-        {recentInProcess ? (
-          <TaskCard booking={recentInProcess} bucket="IN_PROCESS" onPress={() => openTicket(recentInProcess)} onRefresh={() => load(true)} refreshing={refreshing} />
-        ) : (
-          <Text style={styles.empty}>No tasks in progress.</Text>
-        )}
-
-        <Text style={styles.sectionHeader}>Previous Completed</Text>
-        <View style={styles.filterRow}>
-          {FILTERS.map((f) => (
-            <TouchableOpacity
-              key={f}
-              style={[styles.filterChip, filter === f && styles.filterChipActive]}
-              onPress={() => setFilter(f)}
-              activeOpacity={0.85}
-            >
-              <Text style={[styles.filterChipText, filter === f && styles.filterChipTextActive]}>
-                {f}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-        {previousCompleted.length === 0 ? (
-          <Text style={styles.empty}>No tasks found.</Text>
-        ) : (
-          previousCompleted.map((b) => (
-            <TaskCard key={b.id} booking={b} bucket={bucketize(b.status)} onPress={() => openTicket(b)} onRefresh={() => load(true)} refreshing={refreshing} />
-          ))
         )}
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function StatTile({ value, label, hint, icon, bg }) {
-  return (
-    <View style={styles.statTileWrap}>
-      <View style={[styles.statTileTop, { backgroundColor: bg }]}>
-        <Ionicons name={icon} size={11} color="#FFFFFF" />
-        <Text style={styles.statTileTopText}>{label}</Text>
-      </View>
-      <Text style={styles.statTileValue}>{value}</Text>
-      <Text style={styles.statTileHint}>{hint}</Text>
-    </View>
-  );
+function formatTime12(t) {
+  if (!t || typeof t !== 'string') return '—';
+  const [hhRaw, mm] = t.split(':');
+  const hh = Number(hhRaw);
+  if (Number.isNaN(hh)) return '—';
+  const period = hh >= 12 ? 'PM' : 'AM';
+  const h12 = ((hh - 1 + 12) % 12) + 1;
+  return `${pad2(h12)}:${pad2(Number(mm || 0))} ${period}`;
 }
 
-function TaskCard({ booking, bucket, onPress, onRefresh, refreshing }) {
-  const isPending = bucket === 'PENDING';
-  const isInProcess = bucket === 'IN_PROCESS';
-  const isCompleted = bucket === 'COMPLETED';
+function formatDuration(minutes) {
+  if (!minutes || minutes <= 0) return '0m';
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h && m) return `${h}h ${m}m`;
+  if (h) return `${h}h`;
+  return `${m}m`;
+}
 
-  const stepLine =
-    isPending ? 'Spare part has been ordered. Service is Pending'
-      : isInProcess ? 'Technician Work Started'
-        : 'Technician Work Completed';
-  const stepColor =
-    isPending ? '#DC2626'
-      : isInProcess ? '#3B4FD7'
-        : '#15803D';
+function formatLateDate(iso) {
+  if (!iso) return '—';
+  const parts = String(iso).split('-');
+  const y = Number(parts[0]);
+  const m = Number(parts[1]);
+  const dd = Number(parts[2]);
+  if (!y || !m || !dd) return iso;
+  const d = new Date(y, m - 1, dd);
+  const dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()];
+  const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][m - 1];
+  return `${dow}, ${pad2(dd)} ${mon} ${y}`;
+}
 
-  const footerLine =
-    isPending ? `Pending On ${formatDateTime(booking.updatedAt || booking.createdAt)}`
-      : isInProcess ? `In Service Process On ${formatDateTime(booking.updatedAt || booking.createdAt)}`
-        : `Completed On ${formatDateTime(booking.updatedAt || booking.createdAt)}`;
-
+function StatRing({ value, label, color }) {
   return (
-    <TouchableOpacity style={styles.taskCard} onPress={onPress} activeOpacity={0.85}>
-      <View style={styles.taskAccent} />
-      <View style={styles.taskInner}>
-        <View style={styles.taskTopRow}>
-          <Text style={styles.taskDate}>{formatDate(booking.createdAt)}</Text>
-          <Text style={styles.taskTracking}>#{trackingId(booking)}</Text>
-        </View>
-        <View style={styles.taskMiddleRow}>
-          <Text style={styles.taskDevice} numberOfLines={2}>{deviceLine(booking)}</Text>
-        </View>
-        <View style={styles.taskBottomRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.taskStep, { color: stepColor }]}>{stepLine}</Text>
-            <Text style={styles.taskFooter}>{footerLine}</Text>
-          </View>
-          <TouchableOpacity
-            onPress={onRefresh}
-            disabled={refreshing}
-            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-            activeOpacity={0.7}
-            style={styles.taskStatusIcon}
-          >
-            {isPending && (
-              <View style={[styles.statusBadge, { backgroundColor: '#FEE2E2' }]}>
-                {refreshing ? <ActivityIndicator size="small" color="#DC2626" /> : <Ionicons name="refresh" size={14} color="#DC2626" />}
-              </View>
-            )}
-            {isInProcess && (
-              <View style={[styles.statusBadge, { backgroundColor: '#DBEAFE' }]}>
-                {refreshing ? <ActivityIndicator size="small" color="#3B4FD7" /> : <Ionicons name="refresh" size={14} color="#3B4FD7" />}
-              </View>
-            )}
-            {isCompleted && (
-              <View style={[styles.statusBadge, { backgroundColor: '#DCFCE7' }]}>
-                {refreshing ? <ActivityIndicator size="small" color="#15803D" /> : <Ionicons name="refresh" size={14} color="#15803D" />}
-              </View>
-            )}
-          </TouchableOpacity>
-        </View>
+    <View style={styles.statRingWrap}>
+      <View style={[styles.statRing, { borderColor: color }]}>
+        <Text style={styles.statRingValue}>{value}</Text>
       </View>
-    </TouchableOpacity>
+      <Text style={[styles.statRingLabel, { color }]}>{label}</Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#F4F1FB' },
   content: { padding: 12, paddingBottom: 32 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 
-  statsCard: { backgroundColor: '#FFFFFF', borderRadius: 14, padding: 12 },
-  statsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  statsHeaderTitle: { fontSize: 14, fontWeight: '700', color: '#111827' },
-  monthPill: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#7C3AED', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, gap: 6 },
+  card: { backgroundColor: '#FFFFFF', borderRadius: 14, padding: 14 },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  cardTitle: { fontSize: 14, fontWeight: '700', color: '#111827' },
+
+  monthPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E3A8A',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    gap: 6,
+  },
   monthPillText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
   monthPillSep: { width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.3)' },
 
-  statTilesRow: { flexDirection: 'row', gap: 6 },
-  statTileWrap: { flex: 1, backgroundColor: '#F9FAFB', borderRadius: 10, overflow: 'hidden', paddingBottom: 8, alignItems: 'center' },
-  statTileTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, width: '100%', paddingVertical: 5 },
-  statTileTopText: { color: '#FFFFFF', fontSize: 10, fontWeight: '700' },
-  statTileValue: { fontSize: 18, fontWeight: '800', color: '#111827', marginTop: 6 },
-  statTileHint: { fontSize: 9, color: '#9CA3AF', marginTop: 1, fontWeight: '600' },
+  statRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
+  statRingWrap: { alignItems: 'center', flex: 1 },
+  statRing: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    borderWidth: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  statRingValue: { fontSize: 12, fontWeight: '800', color: '#111827' },
+  statRingLabel: { fontSize: 10, fontWeight: '700', marginTop: 4 },
 
-  sectionHeader: { fontSize: 13, fontWeight: '700', color: '#111827', marginTop: 14, marginBottom: 8 },
+  calendar: { marginTop: 4, marginBottom: 8 },
+  calRowHeader: { flexDirection: 'row', marginBottom: 6 },
+  calRow: { flexDirection: 'row' },
+  calCell: { flex: 1, aspectRatio: 1, alignItems: 'center', justifyContent: 'center' },
+  calHeaderCell: { flex: 1, textAlign: 'center', fontSize: 10, fontWeight: '800', color: '#374151' },
+  calHeaderSunday: { color: '#DC2626' },
+  calCellNum: { fontSize: 13, fontWeight: '600', color: '#111827' },
+  calCellSunday: { color: '#DC2626' },
+  calDot: { width: 6, height: 6, borderRadius: 3, marginTop: 2 },
 
-  filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
-  filterChip: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 999, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E5E7EB' },
-  filterChipActive: { backgroundColor: '#1E3A8A', borderColor: '#1E3A8A' },
-  filterChipText: { fontSize: 11, color: '#6B7280', fontWeight: '600' },
-  filterChipTextActive: { color: '#FFFFFF' },
+  legendRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 8 },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  legendDot: { width: 8, height: 8, borderRadius: 4 },
+  legendText: { fontSize: 11, color: '#374151', fontWeight: '500' },
 
-  taskCard: { flexDirection: 'row', backgroundColor: '#FFFFFF', borderRadius: 10, marginBottom: 8, overflow: 'hidden' },
-  taskAccent: { width: 3, backgroundColor: '#7C3AED' },
-  taskInner: { flex: 1, padding: 10 },
-  taskTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  taskDate: { fontSize: 12, fontWeight: '700', color: '#111827' },
-  taskTracking: { fontSize: 11, color: '#6B7280', fontWeight: '600' },
-  taskMiddleRow: { marginTop: 4 },
-  taskDevice: { fontSize: 11, color: '#374151' },
-  taskBottomRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
-  taskStep: { fontSize: 11, fontWeight: '700' },
-  taskFooter: { fontSize: 10, color: '#9CA3AF', marginTop: 2 },
-  taskStatusIcon: { marginLeft: 8 },
-  statusBadge: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-
-  empty: { fontSize: 12, color: '#6B7280', textAlign: 'center', paddingVertical: 14 },
+  lateHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  lateAccent: { width: 3, height: 16, borderRadius: 2, backgroundColor: '#DC2626', marginRight: 8 },
+  lateTotalPill: { marginLeft: 'auto', backgroundColor: '#FEE2E2', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
+  lateTotalText: { fontSize: 11, fontWeight: '700', color: '#B91C1C' },
+  lateRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
+  lateRowLeft: { flex: 1 },
+  lateRowDate: { fontSize: 12, fontWeight: '700', color: '#111827' },
+  lateRowSub: { fontSize: 10, color: '#6B7280', marginTop: 2 },
+  lateRowPill: { backgroundColor: '#FEF2F2', borderColor: '#FECACA', borderWidth: 1, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+  lateRowPillText: { fontSize: 12, fontWeight: '800', color: '#DC2626' },
 });

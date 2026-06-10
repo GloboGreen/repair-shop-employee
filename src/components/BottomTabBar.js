@@ -1,15 +1,31 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, Pressable } from 'react-native';
-import { Home, Calendar, Laptop, User } from 'lucide-react-native';
+import { useSelector } from 'react-redux';
+import { Home, Calendar, Laptop, Truck, User } from 'lucide-react-native';
+import { selectSession } from '../store/authSlice';
+import { resolveRoleKey } from '../config/categories';
 
-const TABS = [
-  { key: 'Home', label: 'Home', icon: Home, route: 'Home' },
-  { key: 'Attendance', label: 'Attendance', icon: Calendar, route: 'AttendanceTab' },
-  { key: 'Tasks', label: 'Tasks', icon: Laptop, route: 'TasksTab' },
-  { key: 'Account', label: 'Account', icon: User, route: 'AccountTab' },
-];
+// Third tab is role-aware:
+//   PICKUP_PERSON → "Pickup" tile (Truck icon) opening the PickupAssign screen
+//   TECHNICIAN / STAFF → "Tasks" tile (Laptop icon) opening the TaskAssign screen
+// Both share the same `key: 'Tasks'` so TAB_FOR_ROUTE highlighting in
+// TechnicianNavigator works uniformly across roles.
+function tabsFor(roleKey) {
+  const isPickup = roleKey === 'PICKUP_PERSON';
+  return [
+    { key: 'Home',       label: 'Home',       icon: Home,     route: 'Home' },
+    { key: 'Attendance', label: 'Attendance', icon: Calendar, route: 'DailyAttendance' },
+    isPickup
+      ? { key: 'Tasks', label: 'Pickup', icon: Truck,  route: 'PickupAssign' }
+      : { key: 'Tasks', label: 'Tasks',  icon: Laptop, route: 'TaskAssign' },
+    { key: 'Account',    label: 'Account',    icon: User,     route: 'AccountTab' },
+  ];
+}
 
 export default function BottomTabBar({ active = 'Home', navigation }) {
+  const session = useSelector(selectSession);
+  const roleKey = resolveRoleKey(session);
+  const TABS = useMemo(() => tabsFor(roleKey), [roleKey]);
   return (
     <View
       className="absolute left-0 right-0 bottom-0 flex-row bg-primary"

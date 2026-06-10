@@ -9,9 +9,20 @@ import {
   RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { ticketApi } from '../api/client';
+import { getEmployeeLeaveRequests } from '../api/technician';
 import { useTechnicianId } from '../auth/useTechnicianId';
+
+// Pretty-print leaveType enum from backend (CASUAL_LEAVE → Casual Leave).
+const LEAVE_TYPE_LABELS = {
+  CASUAL_LEAVE: 'Casual Leave',
+  SICK_LEAVE: 'Sick Leave',
+  EMERGENCY_LEAVE: 'Emergency Leave',
+  PERMISSION: 'Permission',
+  HALF_DAY: 'Half Day',
+  OTHER: 'Other',
+};
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -50,9 +61,7 @@ export default function LeaveReportScreen({ navigation }) {
     if (!technicianId) return;
     if (isRefresh) setRefreshing(true); else setLoading(true);
     try {
-      const res = await ticketApi.get(`/technicians/${technicianId}/leaves`, {
-        query: { month, year },
-      });
+      const res = await getEmployeeLeaveRequests(technicianId, { month, year });
       setList(Array.isArray(res) ? res : []);
     } catch {
       setList([]);
@@ -62,11 +71,13 @@ export default function LeaveReportScreen({ navigation }) {
     }
   }, [technicianId, month, year]);
 
-  React.useEffect(() => { load(); }, [load]);
+  // Reload whenever the screen comes back into focus so a request submitted
+  // on TechnicianApplyLeaveScreen appears immediately on goBack().
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const counts = useMemo(() => ({
     Leave: list.length,
-    Processing: list.filter((l) => l.status === 'PROCESSING').length,
+    Processing: list.filter((l) => l.status === 'PROCESSING' || l.status === 'PENDING').length,
     Rejected: list.filter((l) => l.status === 'REJECTED').length,
     Approved: list.filter((l) => l.status === 'APPROVED').length,
   }), [list]);
@@ -81,9 +92,13 @@ export default function LeaveReportScreen({ navigation }) {
 
   const recent = sorted[0];
   const previous = sorted.slice(1);
+  // Processing chip should match both PROCESSING (legacy) and PENDING rows so
+  // the user's just-applied leave is visible right after submitting.
   const filteredPrevious = filter === 'All'
     ? previous
-    : previous.filter((l) => l.status === filter.toUpperCase());
+    : filter === 'Processing'
+      ? previous.filter((l) => l.status === 'PROCESSING' || l.status === 'PENDING')
+      : previous.filter((l) => l.status === filter.toUpperCase());
 
   const stepMonth = (delta) => {
     let m = month + delta;
@@ -194,17 +209,29 @@ function LeaveCard({ item }) {
     status === 'APPROVED' ? styles.pillApproved
       : status === 'REJECTED' ? styles.pillRejected
         : styles.pillProcessing;
-  const pillLabel = status === 'PROCESSING' ? 'Processing'
-    : status === 'APPROVED' ? 'Approved'
-      : status === 'REJECTED' ? 'Rejected'
-        : status;
+  const pillLabel =
+    status === 'PROCESSING' || status === 'PENDING' ? 'Processing'
+      : status === 'APPROVED' ? 'Approved'
+        : status === 'REJECTED' ? 'Rejected'
+          : status === 'CANCELLED' ? 'Cancelled'
+            : status;
+  const typeLabel = LEAVE_TYPE_LABELS[item.leaveType] || 'Leave';
+  // Date range: show "from → to" so multi-day leaves are obvious; HALF_DAY
+  // collapses to a single date.
+  const dateRangeLabel =
+    item.startDate && item.endDate && item.startDate !== item.endDate
+      ? `${formatDate(item.startDate)} → ${formatDate(item.endDate)}`
+      : formatDate(item.startDate);
 
   return (
     <View style={styles.leaveCard}>
       <View style={styles.leaveAccent} />
       <View style={styles.leaveInner}>
         <View style={styles.leaveTopRow}>
-          <Text style={styles.leaveDate}>{formatDate(item.startDate)}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.leaveTypeText}>{typeLabel}</Text>
+            <Text style={styles.leaveDate}>{dateRangeLabel}</Text>
+          </View>
           <View style={[styles.statusPill, pillStyle]}>
             <Text style={styles.statusPillText}>{pillLabel}</Text>
           </View>
@@ -212,20 +239,45 @@ function LeaveCard({ item }) {
 
         <View style={styles.leaveCols}>
           <View style={styles.leaveCol}>
-            <Text style={styles.leaveColValue} numberOfLines={1}>{item.reason || '—'}</Text>
-            <Text style={styles.leaveColLabel}>Leave Reason</Text>
+            <Text style={styles.leaveColValue} numberOfLines={2}>{item.reason || '—'}</Text>
+            <Text style={styles.leaveColLabel}>Reason</Text>
           </View>
           <View style={styles.leaveCol}>
             <Text style={styles.leaveColValue}>{item.appliedDaysLabel || '—'}</Text>
-            <Text style={styles.leaveColLabel}>Applied Days</Text>
+            <Text style={styles.leaveColLabel}>Days</Text>
           </View>
           <View style={styles.leaveCol}>
             <Text style={styles.leaveColValue} numberOfLines={1}>
               {formatDateTime(item.requestedAt)}
             </Text>
-            <Text style={styles.leaveColLabel}>Request Date &amp; Time</Text>
+            <Text style={styles.leaveColLabel}>Applied On</Text>
           </View>
         </View>
+
+        {/* Approver / rejection metadata. Only render when the owner has
+            acted on the request so PENDING cards stay compact. */}
+        {status === 'REJECTED' && item.rejectionReason ? (
+          <View style={styles.metaBlock}>
+            <Text style={styles.metaLabel}>Rejection reason</Text>
+            <Text style={styles.metaValue} numberOfLines={3}>{item.rejectionReason}</Text>
+            {item.rejectedAt ? (
+              <Text style={styles.metaTimestamp}>Rejected {formatDateTime(item.rejectedAt)}</Text>
+            ) : null}
+          </View>
+        ) : null}
+        {status === 'APPROVED' && (item.remarks || item.approvedAt) ? (
+          <View style={styles.metaBlock}>
+            {item.remarks ? (
+              <>
+                <Text style={styles.metaLabel}>Owner remarks</Text>
+                <Text style={styles.metaValue} numberOfLines={3}>{item.remarks}</Text>
+              </>
+            ) : null}
+            {item.approvedAt ? (
+              <Text style={styles.metaTimestamp}>Approved {formatDateTime(item.approvedAt)}</Text>
+            ) : null}
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -265,8 +317,14 @@ const styles = StyleSheet.create({
   leaveCard: { flexDirection: 'row', backgroundColor: '#FFFFFF', borderRadius: 10, marginBottom: 8, overflow: 'hidden' },
   leaveAccent: { width: 3, backgroundColor: '#7C3AED' },
   leaveInner: { flex: 1, padding: 10 },
-  leaveTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  leaveTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
+  leaveTypeText: { fontSize: 12, fontWeight: '700', color: '#3B4FD7', marginBottom: 2 },
   leaveDate: { fontSize: 12, fontWeight: '700', color: '#111827' },
+
+  metaBlock: { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
+  metaLabel: { fontSize: 10, color: '#9CA3AF', fontWeight: '600', marginBottom: 2 },
+  metaValue: { fontSize: 11, color: '#111827', fontWeight: '600' },
+  metaTimestamp: { fontSize: 10, color: '#6B7280', marginTop: 4 },
 
   statusPill: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999 },
   pillProcessing: { backgroundColor: '#F97316' },

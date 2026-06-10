@@ -6,7 +6,7 @@ export default function TechnicianDashboardScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <Text style={styles.title}>Technician Dashboard</Text>
-      <TouchableOpacity style={styles.card} onPress={() => navigation.navigate('AssignedTickets')}>
+      <TouchableOpacity style={styles.card} onPress={() => navigation.navigate('TaskAssign')}>
         <Text style={styles.cardTitle}>My Assigned Tickets</Text>
       </TouchableOpacity>
     </SafeAreaView>

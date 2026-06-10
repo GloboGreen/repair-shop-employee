@@ -1,7 +1,6 @@
 import React from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import BottomTabBar from '../components/BottomTabBar';
 
 export default function TasksTabScreen({ navigation }) {
   return (
@@ -12,13 +11,12 @@ export default function TasksTabScreen({ navigation }) {
           Jump straight into your assigned tickets.
         </Text>
         <Pressable
-          onPress={() => navigation.navigate('AssignedTickets')}
+          onPress={() => navigation.navigate('TaskAssign')}
           className="mt-4 bg-primary rounded-xl px-6 py-3"
         >
           <Text className="text-white font-bold">Open My Tickets</Text>
         </Pressable>
       </View>
-      <BottomTabBar active="Tasks" navigation={navigation} />
     </SafeAreaView>
   );
 }

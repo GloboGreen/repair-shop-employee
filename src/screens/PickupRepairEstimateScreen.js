@@ -1,0 +1,368 @@
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Image,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import { Ionicons } from '@expo/vector-icons';
+import { getPickupRepairEstimate, submitPickupRepairEstimate } from '../api/pickups';
+import { uploadMedia } from '../api/media';
+import { notify } from '../components/confirm';
+
+const SLOT_DEFS = [
+  { key: 'frontImageUrl', label: 'Front Side', file: 'front.jpg' },
+  { key: 'backImageUrl', label: 'Back Side', file: 'back.jpg' },
+  { key: 'videoUrl', label: 'Coverage Photo', file: 'coverage.jpg' },
+];
+
+function trackingId(booking, estimate) {
+  return estimate?.bookingNumber
+    || booking?.bookingNumber
+    || `#${String(booking?.id || '').replace(/[^0-9a-zA-Z]/g, '').slice(0, 12).toUpperCase()}`;
+}
+
+function statusLabel(status) {
+  const s = String(status || '').toUpperCase();
+  if (s === 'PICKUP_ON_THE_WAY') return 'Pickup On The Way';
+  if (s === 'REPAIR_ESTIMATE_PROCESSING') return 'Repair Estimate Processing';
+  if (s === 'DEVICE_PICKED_UP' || s === 'PICKED_UP') return 'Device Picked Up';
+  if (s === 'REACHED_SHOP') return 'Reached Shop';
+  return s ? s.replace(/_/g, ' ') : 'Assigned Pickup';
+}
+
+export default function PickupRepairEstimateScreen({ route, navigation }) {
+  const booking = route?.params?.booking || null;
+  const bookingId = route?.params?.bookingId || booking?.id;
+  // prefillImages comes from UploadRepairImagesScreen — when present, hide the
+  // photo section here so the user isn't asked to upload twice.
+  const prefillImages = route?.params?.prefillImages || null;
+  const hasPrefill = Array.isArray(prefillImages) && prefillImages.length > 0;
+  const [estimate, setEstimate] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [amount, setAmount] = useState('');
+  const [note, setNote] = useState(booking?.issueSummary || '');
+  const [slots, setSlots] = useState(() => SLOT_DEFS.map((def) => {
+    const prefill = hasPrefill ? prefillImages.find((p) => p.key === def.key) : null;
+    if (prefill) {
+      return {
+        ...def,
+        uri: prefill.uri || prefill.remoteUrl || null,
+        remoteUrl: prefill.remoteUrl || null,
+        name: prefill.name,
+        type: prefill.type,
+      };
+    }
+    return {
+      ...def,
+      uri: booking?.[def.key] || null,
+      remoteUrl: booking?.[def.key] || null,
+    };
+  }));
+
+  const load = useCallback(async () => {
+    if (!bookingId) return;
+    setLoading(true);
+    try {
+      const data = await getPickupRepairEstimate(bookingId);
+      setEstimate(data);
+      setAmount(data?.estimateAmount != null ? String(data.estimateAmount) : (booking?.estimateAmount ? String(booking.estimateAmount) : ''));
+      setNote(data?.issueSummary || booking?.issueSummary || '');
+      setSlots(SLOT_DEFS.map((def) => {
+        // Prefer locally-picked prefill over backend URLs — the upload step
+        // happens before the estimate is persisted, so backend won't have it.
+        const prefill = hasPrefill ? prefillImages.find((p) => p.key === def.key) : null;
+        if (prefill && (prefill.uri || prefill.remoteUrl)) {
+          return {
+            ...def,
+            uri: prefill.uri || prefill.remoteUrl,
+            remoteUrl: prefill.remoteUrl || null,
+            name: prefill.name,
+            type: prefill.type,
+          };
+        }
+        const url = data?.[def.key] || booking?.[def.key] || null;
+        return { ...def, uri: url, remoteUrl: url };
+      }));
+    } catch (e) {
+      notify('Could not load estimate', e?.message || 'Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }, [booking, bookingId, hasPrefill, prefillImages]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const pickSlot = async (index) => {
+    if (Platform.OS !== 'web') {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        notify('Permission required', 'Allow photo access to upload device images.');
+        return;
+      }
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: false,
+      quality: 0.75,
+    });
+    if (result.canceled) return;
+    const asset = result.assets?.[0];
+    if (!asset?.uri) return;
+    setSlots((prev) => {
+      const next = [...prev];
+      next[index] = {
+        ...next[index],
+        uri: asset.uri,
+        remoteUrl: null,
+        name: asset.fileName,
+        type: asset.mimeType || 'image/jpeg',
+      };
+      return next;
+    });
+  };
+
+  const removeSlot = (index) => {
+    setSlots((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], uri: null, remoteUrl: null, name: null, type: null };
+      return next;
+    });
+  };
+
+  const submit = async () => {
+    const cleanedAmount = String(amount || '').replace(/[^0-9.]/g, '');
+    if (!cleanedAmount || Number(cleanedAmount) <= 0) {
+      notify('Estimate required', 'Enter the estimated repair value.');
+      return;
+    }
+    if (!slots.some((slot) => slot.uri || slot.remoteUrl)) {
+      notify('Device image required', 'Upload at least one device image.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const uploaded = {};
+      for (const slot of slots) {
+        if (!slot.uri && !slot.remoteUrl) continue;
+        if (slot.remoteUrl) {
+          uploaded[slot.key] = slot.remoteUrl;
+          continue;
+        }
+        const res = await uploadMedia({
+          uri: slot.uri,
+          name: slot.name || slot.file,
+          type: slot.type || 'image/jpeg',
+          folder: `pickup-estimates/${bookingId}`,
+        });
+        const url = res?.url || res?.secure_url;
+        if (!url) throw new Error('Upload returned no URL');
+        uploaded[slot.key] = url;
+      }
+      await submitPickupRepairEstimate(bookingId, {
+        estimatedRepairValue: cleanedAmount,
+        issueSummary: note,
+        ...uploaded,
+      });
+      notify('Estimate submitted', 'Repair estimate saved for this booking.');
+      navigation.goBack();
+    } catch (e) {
+      notify('Submit failed', e?.message || 'Could not save repair estimate.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator color="#00008B" />
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.safe}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <View style={styles.headerCard}>
+          <View style={styles.headerIcon}>
+            <Ionicons name="receipt-outline" size={18} color="#00008B" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.headerTitle}>{trackingId(booking, estimate)}</Text>
+            <Text style={styles.headerSub}>{statusLabel(estimate?.status || booking?.status)}</Text>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Device Images</Text>
+          <View style={styles.imageRow}>
+            {slots.map((slot, index) => (
+              <View key={slot.key} style={styles.imageCol}>
+                <Text style={styles.slotLabel}>{slot.label}</Text>
+                <Pressable style={styles.imageSlot} onPress={() => pickSlot(index)}>
+                  {slot.uri ? (
+                    <>
+                      <Image source={{ uri: slot.uri }} style={styles.preview} resizeMode="cover" />
+                      <Pressable style={styles.removeBtn} onPress={() => removeSlot(index)} hitSlop={8}>
+                        <Ionicons name="close" size={13} color="#FFFFFF" />
+                      </Pressable>
+                    </>
+                  ) : (
+                    <View style={styles.emptySlot}>
+                      <Ionicons name="camera-outline" size={20} color="#64748B" />
+                      <Text style={styles.emptySlotText}>Upload</Text>
+                    </View>
+                  )}
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Estimated Repair Value</Text>
+          <View style={styles.amountBox}>
+            <Text style={styles.amountPrefix}>Rs.</Text>
+            <TextInput
+              value={amount}
+              onChangeText={setAmount}
+              keyboardType="decimal-pad"
+              placeholder="0.00"
+              placeholderTextColor="#94A3B8"
+              style={styles.amountInput}
+            />
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Complaint Notes</Text>
+          <TextInput
+            value={note}
+            onChangeText={setNote}
+            multiline
+            placeholder="Enter issue details"
+            placeholderTextColor="#94A3B8"
+            style={styles.noteInput}
+          />
+        </View>
+
+        <Pressable
+          style={[styles.submitBtn, submitting && { opacity: 0.65 }]}
+          onPress={submit}
+          disabled={submitting}
+        >
+          {submitting ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <>
+              <Ionicons name="checkmark-circle" size={17} color="#FFFFFF" />
+              <Text style={styles.submitText}>Submit Estimate</Text>
+            </>
+          )}
+        </Pressable>
+      </ScrollView>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: '#F8FAFC' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F8FAFC' },
+  content: { padding: 14, paddingBottom: 36 },
+  headerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  headerIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#EEF2FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  headerTitle: { fontSize: 15, fontWeight: '800', color: '#111827' },
+  headerSub: { fontSize: 11, color: '#64748B', marginTop: 2, fontWeight: '600' },
+  section: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  sectionTitle: { fontSize: 13, fontWeight: '800', color: '#111827', marginBottom: 10 },
+  imageRow: { flexDirection: 'row', marginHorizontal: -4 },
+  imageCol: { flex: 1, paddingHorizontal: 4 },
+  slotLabel: { fontSize: 10, color: '#64748B', fontWeight: '700', marginBottom: 5, textAlign: 'center' },
+  imageSlot: {
+    height: 96,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderStyle: 'dashed',
+    overflow: 'hidden',
+    backgroundColor: '#F8FAFC',
+  },
+  preview: { width: '100%', height: '100%' },
+  emptySlot: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  emptySlotText: { fontSize: 10, color: '#64748B', marginTop: 4, fontWeight: '700' },
+  removeBtn: {
+    position: 'absolute',
+    top: 5,
+    right: 5,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  amountBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 12,
+  },
+  amountPrefix: { fontSize: 14, fontWeight: '800', color: '#111827', marginRight: 8 },
+  amountInput: { flex: 1, height: 44, fontSize: 15, fontWeight: '700', color: '#111827' },
+  noteInput: {
+    minHeight: 96,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    padding: 10,
+    textAlignVertical: 'top',
+    color: '#111827',
+    backgroundColor: '#F8FAFC',
+    fontSize: 13,
+  },
+  submitBtn: {
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: '#16A34A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  submitText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
+});

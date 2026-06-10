@@ -1,9 +1,8 @@
 import React from 'react';
 import { View, Text } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import BottomTabBar from '../components/BottomTabBar';
 
-export default function AttendanceTabScreen({ navigation }) {
+export default function AttendanceTabScreen() {
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       <View className="flex-1 items-center justify-center px-6">
@@ -12,7 +11,6 @@ export default function AttendanceTabScreen({ navigation }) {
           Tap a date to view your check-in/check-out history.
         </Text>
       </View>
-      <BottomTabBar active="Attendance" navigation={navigation} />
     </SafeAreaView>
   );
 }

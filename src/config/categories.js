@@ -7,6 +7,8 @@ import {
   Laptop,
   ListChecks,
   ReceiptText,
+  Truck,
+  ScrollText,
 } from 'lucide-react-native';
 
 // Master list of every category tile the employee app can render.
@@ -18,38 +20,46 @@ export const CATEGORY_DEFS = {
   monthly_summary:  { label: 'Monthly\nSummary', icon: CalendarRange, route: 'MonthlySummary' },
   leave_request:    { label: 'Leave\nRequest', icon: LogOut, route: 'TechnicianApplyLeave' },
   leave_report:     { label: 'Leave\nReport', icon: ClipboardList, route: 'LeaveReport' },
-  assign_task:      { label: 'Assign\nTask', icon: Laptop, route: 'AssignTask' },
-  task_report:      { label: 'Task\nReport', icon: ListChecks, route: 'AssignedTickets' },
+  assign_task:      { label: 'Assign\nTask', icon: Laptop, route: 'TaskAssign' },
+  task_report:      { label: 'Task\nReport', icon: ListChecks, route: 'TaskReport' },
+  assign_pickup:    { label: 'Assign\nPickup', icon: Truck, route: 'PickupAssign' },
+  pickup_report:    { label: 'Pickup\nReport', icon: ScrollText, route: 'PickupReport' },
   salary_report:    { label: 'Salary\nReport', icon: ReceiptText, route: 'SalaryReport' },
 };
 
-// Per-role visible tiles, in display order. Only Staff (and Shop Owners,
-// who fall through to STAFF) can see Assign Task.
+// Per-role visible tiles, in display order.
+//   STAFF        — no task / pickup tiles at all.
+//   TECHNICIAN   — Assign Task + Task Report (assigned-ticket workflow).
+//   PICKUP_PERSON — Assign Pickup + Pickup Report (same workflow, relabeled).
 const ROLE_CATEGORIES = {
   STAFF: [
     'daily_attendance', 'daily_shift', 'monthly_summary', 'leave_request',
-    'leave_report', 'assign_task', 'task_report', 'salary_report',
+    'leave_report', 'salary_report',
   ],
   TECHNICIAN: [
     'daily_attendance', 'daily_shift', 'monthly_summary', 'leave_request',
-    'leave_report', 'task_report', 'salary_report',
+    'leave_report', 'assign_task', 'task_report', 'salary_report',
   ],
   PICKUP_PERSON: [
     'daily_attendance', 'daily_shift', 'monthly_summary', 'leave_request',
-    'leave_report', 'task_report', 'salary_report',
+    'leave_report', 'assign_pickup', 'pickup_report', 'salary_report',
   ],
 };
 
 // The platform stores pickup persons as `technicians` rows whose `roleLabel`
 // is 'Pickup Person' — see project memory. So we prefer roleLabel when the
 // auth response provides it, then fall back to the roles[] array.
+// Legacy auth rows stored the role as 'PICKUP PERSON' (space) instead of the
+// canonical 'PICKUP_PERSON' (underscore); normalize both forms before matching.
 export function resolveRoleKey(session) {
   const label = String(session?.roleLabel || '').toLowerCase();
   if (label.includes('pickup')) return 'PICKUP_PERSON';
   if (label.includes('staff')) return 'STAFF';
   if (label.includes('technician')) return 'TECHNICIAN';
 
-  const roles = session?.roles || [];
+  const roles = (session?.roles || []).map((r) =>
+    String(r || '').trim().toUpperCase().replace(/\s+/g, '_')
+  );
   if (roles.includes('SHOP_OWNER')) return 'STAFF';
   if (roles.includes('STAFF')) return 'STAFF';
   if (roles.includes('PICKUP_PERSON')) return 'PICKUP_PERSON';

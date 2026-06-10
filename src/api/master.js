@@ -61,6 +61,16 @@ export async function listRepairServices({ categoryId, deviceCategoryId } = {}) 
   return Array.isArray(res) ? res : res?.content || [];
 }
 
+// Unfiltered list of every `master_repair_services` row — used by the
+// pickup-person Device Services screen which groups all services by
+// category client-side. The filtered variant above bails to [] when no
+// scope is given, so this dedicated helper avoids accidentally widening
+// the result set of existing solution-pack callers.
+export async function listAllRepairServices() {
+  const res = await masterGet('master/repair-services');
+  return Array.isArray(res) ? res : res?.content || [];
+}
+
 // Device categories (Mobile, Tablet, ...) — used to scope the repair-category
 // radio list when the ticket's brand resolves to one.
 export async function listDeviceCategories() {
@@ -75,5 +85,36 @@ export async function listTechnicianWorkStatuses({ activeOnly = true } = {}) {
   const res = await masterGet('master/technician-work-statuses', {
     query: activeOnly ? { activeOnly: true } : undefined,
   });
+  return Array.isArray(res) ? res : res?.content || [];
+}
+
+// Master data for the pickup-person Repair Estimate flow. The pickup person
+// re-confirms what the customer entered (brand → model → color/RAM/storage)
+// on the actual device they collected, so each screen needs to list all
+// brands / category-filtered brands / models for a brand / RAM / storage.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(v) { return typeof v === 'string' && UUID_RE.test(v); }
+
+export async function listBrandsForCategory(categoryIdOrCode) {
+  if (!categoryIdOrCode) return listBrands();
+  const path = isUuid(categoryIdOrCode)
+    ? `master/categories/${categoryIdOrCode}/brands`
+    : `master/categories/by-code/${encodeURIComponent(String(categoryIdOrCode).toUpperCase())}/brands`;
+  const res = await masterGet(path).catch(() => []);
+  return Array.isArray(res) ? res : res?.content || [];
+}
+
+export async function listRamOptions() {
+  const res = await masterGet('master/ram-options');
+  return Array.isArray(res) ? res : res?.content || [];
+}
+
+export async function listStorageOptions() {
+  const res = await masterGet('master/storage-options');
+  return Array.isArray(res) ? res : res?.content || [];
+}
+
+export async function listColors() {
+  const res = await masterGet('master/colors');
   return Array.isArray(res) ? res : res?.content || [];
 }

@@ -8,8 +8,13 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSelector } from 'react-redux';
 import { ticketApi } from '../api/client';
 import { useTechnicianId } from '../auth/useTechnicianId';
+import { selectSession } from '../store/authSlice';
+import { effectiveLateMinutes } from './DailyAttendanceScreen';
+
+const DEFAULT_DUTY_CHECK_IN = '09:30:00';
 
 const DAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DAYS_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -39,8 +44,19 @@ function isoDate(d) {
   return d.toISOString().slice(0, 10);
 }
 
+function formatDuration(minutes) {
+  if (!minutes || minutes <= 0) return '';
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h && m) return `${h}h ${m}m`;
+  if (h) return `${h}h`;
+  return `${m}m`;
+}
+
 export default function DailyShiftScheduleScreen() {
   const technicianId = useTechnicianId();
+  const session = useSelector(selectSession);
+  const dutyCheckIn = session?.defaultCheckIn || DEFAULT_DUTY_CHECK_IN;
   const todayIso = isoDate(new Date());
   const [selectedDate, setSelectedDate] = useState(todayIso);
   const [dayData, setDayData] = useState(null);
@@ -81,6 +97,11 @@ export default function DailyShiftScheduleScreen() {
 
   const checkIn = parseTime(dayData?.checkInTime);
   const checkOut = parseTime(dayData?.checkOutTime);
+  const duty = parseTime(dutyCheckIn);
+  // Use the shared helper so this screen's "Late by Xh Ym" matches the Late
+  // HR's column on the Daily Attendance screen for the same date.
+  const lateMinutes = effectiveLateMinutes(dayData, dutyCheckIn);
+  const isLate = lateMinutes > 0;
 
   if (!technicianId) {
     return (
@@ -162,6 +183,7 @@ export default function DailyShiftScheduleScreen() {
             {SCHEDULE_HOURS.map((h) => {
               const isCheckIn = checkIn && checkIn.hour === h;
               const isCheckOut = checkOut && checkOut.hour === h;
+              const isDuty = duty && duty.hour === h;
               return (
                 <View key={h} style={styles.hourRow}>
                   <View style={styles.hourPill}>
@@ -169,10 +191,20 @@ export default function DailyShiftScheduleScreen() {
                   </View>
                   <View style={styles.hourLineWrap}>
                     <View style={styles.hourLine} />
+                    {isDuty && !isCheckIn && (
+                      <View style={[styles.eventChip, styles.eventChipDuty]}>
+                        <Text style={styles.eventChipDutyText}>Duty Start</Text>
+                        <Text style={styles.eventChipDutyTime}>({duty.label})</Text>
+                      </View>
+                    )}
                     {isCheckIn && (
-                      <View style={[styles.eventChip, styles.eventChipCheckIn]}>
-                        <Text style={styles.eventChipText}>Check-In Time</Text>
-                        <Text style={styles.eventChipTime}>({checkIn.label})</Text>
+                      <View style={[styles.eventChip, isLate ? styles.eventChipLate : styles.eventChipCheckIn]}>
+                        <Text style={isLate ? styles.eventChipLateText : styles.eventChipText}>
+                          {isLate ? `Check-In Late by ${formatDuration(lateMinutes)}` : 'Check-In Time'}
+                        </Text>
+                        <Text style={isLate ? styles.eventChipLateTime : styles.eventChipTime}>
+                          ({checkIn.label})
+                        </Text>
                       </View>
                     )}
                     {isCheckOut && (
@@ -241,6 +273,12 @@ const styles = StyleSheet.create({
   eventChipCheckOut: { backgroundColor: '#DCFCE7' },
   eventChipText: { fontSize: 12, fontWeight: '700', color: '#15803D' },
   eventChipTime: { fontSize: 11, fontWeight: '600', color: '#15803D' },
+  eventChipDuty: { backgroundColor: '#E0E7FF', borderWidth: 1, borderColor: '#6366F1', borderStyle: 'dashed' },
+  eventChipDutyText: { fontSize: 12, fontWeight: '700', color: '#3730A3' },
+  eventChipDutyTime: { fontSize: 11, fontWeight: '600', color: '#3730A3' },
+  eventChipLate: { backgroundColor: '#FEE2E2', borderWidth: 1, borderColor: '#FCA5A5' },
+  eventChipLateText: { fontSize: 12, fontWeight: '800', color: '#B91C1C' },
+  eventChipLateTime: { fontSize: 11, fontWeight: '700', color: '#B91C1C' },
 
   empty: { fontSize: 13, color: '#6B7280', textAlign: 'center', marginTop: 16 },
 

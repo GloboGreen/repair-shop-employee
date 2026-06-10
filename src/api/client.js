@@ -5,6 +5,7 @@ import {
   TECHNICIAN_BASE,
   SHOP_BASE,
   USER_BASE,
+  ORDER_BASE,
 } from './config';
 import { getToken, clearSession, notifyAuthExpired } from '../auth/session';
 
@@ -132,3 +133,4 @@ export const ticketApi = createClient(TICKET_BASE);
 export const technicianApi = createClient(TECHNICIAN_BASE);
 export const shopApi = createClient(SHOP_BASE);
 export const userApi = createClient(USER_BASE);
+export const orderApi = createClient(ORDER_BASE);

@@ -24,7 +24,7 @@ function formatRupee(v) {
   return `₹ ${n.toLocaleString('en-IN')}`;
 }
 
-export default function SalaryReportScreen() {
+export default function SalaryReportScreen({ navigation }) {
   const technicianId = useTechnicianId();
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
@@ -137,7 +137,12 @@ export default function SalaryReportScreen() {
           <ActivityIndicator size="small" color="#3B4FD7" style={{ marginVertical: 16 }} />
         ) : (
           rows.map((row, i) => (
-            <MonthCard key={`${row.month}-${row.year}`} row={row} index={i + 1} />
+            <MonthCard
+              key={`${row.month}-${row.year}`}
+              row={row}
+              index={i + 1}
+              onPress={() => navigation.navigate('Payslip', { month: row.month, year: row.year })}
+            />
           ))
         )}
       </ScrollView>
@@ -158,12 +163,16 @@ function SummaryTile({ label, value, sub, icon, color, bg }) {
   );
 }
 
-function MonthCard({ row, index }) {
+function MonthCard({ row, index, onPress }) {
   const isEmpty = row._empty;
   const net = Number(row.netSalary || 0);
   const isPaid = !isEmpty && net > 0;
   return (
-    <View style={[styles.monthCard, isEmpty && styles.monthCardEmpty]}>
+    <TouchableOpacity
+      activeOpacity={0.85}
+      onPress={onPress}
+      style={[styles.monthCard, isEmpty && styles.monthCardEmpty]}
+    >
       <View style={styles.monthIndexBubble}>
         <Text style={styles.monthIndexText}>{String(index).padStart(2, '0')}</Text>
       </View>
@@ -199,7 +208,7 @@ function MonthCard({ row, index }) {
           </View>
         )}
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 

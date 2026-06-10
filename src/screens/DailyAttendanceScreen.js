@@ -10,14 +10,52 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useSelector } from 'react-redux';
 import { ticketApi } from '../api/client';
 import { useTechnicianId } from '../auth/useTechnicianId';
+import { selectSession } from '../store/authSlice';
+
+// Fallback duty start when the technician hasn't configured one yet. Matches
+// the placeholder in TechnicianProfileScreen so the per-day "Late HR's"
+// column lines up with what's visually pre-filled in the profile form.
+const DEFAULT_DUTY_CHECK_IN = '09:30:00';
+
+// "HH:mm[:ss]" → minutes since midnight. Used to compute late minutes
+// client-side when the backend returned 0 (typically because the
+// technician's defaultCheckIn column is null in the DB).
+function parseTimeToMinutes(s) {
+  if (!s || typeof s !== 'string') return null;
+  const [h, m] = s.split(':');
+  const hh = Number(h);
+  const mm = Number(m || 0);
+  if (Number.isNaN(hh) || Number.isNaN(mm)) return null;
+  return hh * 60 + mm;
+}
+
+// Late minutes for a single day. Honours backend value when non-zero;
+// otherwise derives it from the duty start (session or fallback) and the
+// recorded check-in. Returns 0 for non-present statuses so a LEAVE / HOLIDAY
+// row doesn't accidentally accumulate late minutes if the data row happens
+// to carry a stale check-in.
+export function effectiveLateMinutes(record, dutyCheckIn) {
+  if (!record) return 0;
+  const status = String(record.status || '').toUpperCase();
+  if (status === 'LEAVE' || status === 'HOLIDAY' || status === 'WEEK_OFF') return 0;
+  const backend = Number(record.lateMinutes || 0);
+  if (backend > 0) return backend;
+  const checkInMin = parseTimeToMinutes(record.checkInTime);
+  const dutyMin = parseTimeToMinutes(dutyCheckIn || DEFAULT_DUTY_CHECK_IN);
+  if (checkInMin == null || dutyMin == null) return 0;
+  const diff = checkInMin - dutyMin;
+  return diff > 0 ? diff : 0;
+}
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 const DOW = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 const STATUS_COLORS = {
   LEAVE: '#DB2777',
@@ -40,6 +78,8 @@ function pad2(n) {
 
 export default function DailyAttendanceScreen() {
   const technicianId = useTechnicianId();
+  const session = useSelector(selectSession);
+  const dutyCheckIn = session?.defaultCheckIn || DEFAULT_DUTY_CHECK_IN;
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
@@ -116,93 +156,27 @@ export default function DailyAttendanceScreen() {
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} />}
       >
-        <View style={styles.card}>
-          <View style={styles.headerRow}>
-            <Text style={styles.cardTitle}>Attendance Overview</Text>
-            <View style={styles.monthPill}>
-              <Text style={styles.monthPillText}>{MONTHS[month - 1]} {year}</Text>
-              <TouchableOpacity onPress={() => stepMonth(-1)} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
-                <Ionicons name="chevron-back" size={14} color="#FFFFFF" />
-              </TouchableOpacity>
-              <View style={styles.monthPillSep} />
-              <TouchableOpacity onPress={() => stepMonth(1)} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
-                <Ionicons name="chevron-forward" size={14} color="#FFFFFF" />
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {loading && !data ? (
-            <ActivityIndicator size="large" color="#3B4FD7" style={{ marginVertical: 24 }} />
-          ) : (
-            <>
-              <View style={styles.statRow}>
-                <StatRing value={present} label="Present" color={RING_COLORS.present} />
-                <StatRing value={`${late} Hrs`} label="Late" color={RING_COLORS.late} />
-                <StatRing value={pad2(permission)} label="Permission" color={RING_COLORS.permission} />
-                <StatRing value={pad2(leaves)} label="Leaves" color={RING_COLORS.leaves} />
-                <StatRing value={pad2(holidays)} label="Holidays" color={RING_COLORS.holidays} />
-              </View>
-
-              <View style={styles.calendar}>
-                <View style={styles.calRowHeader}>
-                  {DOW.map((d, i) => (
-                    <Text key={d} style={[styles.calHeaderCell, i === 0 && styles.calHeaderSunday]}>
-                      {d}
-                    </Text>
-                  ))}
-                </View>
-                {grid.map((week, wi) => (
-                  <View key={wi} style={styles.calRow}>
-                    {week.map((cell, ci) => {
-                      if (!cell) return <View key={ci} style={styles.calCell} />;
-                      const isSunday = ci === 0;
-                      const status = (cell.record?.status || '').toUpperCase();
-                      const effectiveStatus = status || (isSunday ? 'WEEK_OFF' : null);
-                      const dotColor = STATUS_COLORS[effectiveStatus];
-                      return (
-                        <View key={ci} style={styles.calCell}>
-                          <Text style={[styles.calCellNum, isSunday && styles.calCellSunday]}>
-                            {cell.day}
-                          </Text>
-                          {dotColor ? <View style={[styles.calDot, { backgroundColor: dotColor }]} /> : null}
-                        </View>
-                      );
-                    })}
-                  </View>
-                ))}
-              </View>
-
-              <View style={styles.legendRow}>
-                {[
-                  ['Leave', STATUS_COLORS.LEAVE],
-                  ['Late', STATUS_COLORS.LATE],
-                  ['Permission', STATUS_COLORS.PERMISSION],
-                  ['Week off', STATUS_COLORS.WEEK_OFF],
-                  ['Holiday', STATUS_COLORS.HOLIDAY],
-                ].map(([label, color]) => (
-                  <View key={label} style={styles.legendItem}>
-                    <View style={[styles.legendDot, { backgroundColor: color }]} />
-                    <Text style={styles.legendText}>{label}</Text>
-                  </View>
-                ))}
-              </View>
-            </>
-          )}
-        </View>
-
         <View style={styles.dailySection}>
           <View style={styles.dailyHeader}>
-            <Text style={styles.dailyTitle}>Attendance Monthly</Text>
+            <Text style={styles.dailyTitle}>This Month</Text>
             <View style={styles.dailyMonthPill}>
+              <TouchableOpacity onPress={() => stepMonth(-1)} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
+                <Ionicons name="chevron-back" size={12} color="#111827" />
+              </TouchableOpacity>
               <Text style={styles.dailyMonthText}>{MONTHS[month - 1]} {year}</Text>
+              <TouchableOpacity onPress={() => stepMonth(1)} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
+                <Ionicons name="chevron-forward" size={12} color="#111827" />
+              </TouchableOpacity>
               <View style={styles.dailyMonthBtn}>
                 <Ionicons name="calendar" size={12} color="#FFFFFF" />
               </View>
             </View>
           </View>
 
-          {(data?.dailyRecords && data.dailyRecords.length > 0) ? (
-            data.dailyRecords.map((day) => <DayCard key={day.date} day={day} />)
+          {loading && !data ? (
+            <ActivityIndicator size="large" color="#3B4FD7" style={{ marginVertical: 24 }} />
+          ) : (data?.dailyRecords && data.dailyRecords.length > 0) ? (
+            data.dailyRecords.map((day) => <DayCard key={day.date} day={day} dutyCheckIn={dutyCheckIn} />)
           ) : (
             <Text style={styles.empty}>No attendance records for this month.</Text>
           )}
@@ -223,7 +197,7 @@ function StatRing({ value, label, color }) {
   );
 }
 
-function DayCard({ day }) {
+function DayCard({ day, dutyCheckIn }) {
   const status = (day.status || 'GENERAL').toUpperCase();
   const dateLabel = formatDateLabel(day);
   if (status === 'LEAVE') {
@@ -256,18 +230,30 @@ function DayCard({ day }) {
       </View>
     );
   }
-  const isLate = status === 'LATE';
+  const lateMinutes = effectiveLateMinutes(day, dutyCheckIn);
+  // Promote the visual status to LATE when the client-side computation says
+  // so, even if the backend stored "GENERAL" because defaultCheckIn was null
+  // at check-in time. Otherwise the status pill and the Late HR's column
+  // disagree and the user can't tell which to trust.
+  const isLate = status === 'LATE' || lateMinutes > 0;
   const isPermission = status === 'PERMISSION';
+  const lateLabel = lateMinutes > 0 ? formatDuration(lateMinutes) : null;
   return (
     <View style={styles.dayCard}>
-      <View style={styles.dayLeftAccent} />
+      <View style={[styles.dayLeftAccent, isLate && { backgroundColor: '#DC2626' }]} />
       <View style={styles.dayInner}>
         <View style={styles.dayTopRow}>
           <Text style={styles.dayDate}>{dateLabel}</Text>
           <View style={styles.dayTopRight}>
-            <View style={[styles.dayPill, styles.dayPillGeneral]}>
-              <Text style={styles.dayPillText}>General</Text>
-            </View>
+            {isLate ? (
+              <View style={[styles.dayPill, styles.dayPillLate]}>
+                <Text style={styles.dayPillTextOn}>Late{lateLabel ? ` • ${lateLabel}` : ''}</Text>
+              </View>
+            ) : (
+              <View style={[styles.dayPill, styles.dayPillGeneral]}>
+                <Text style={styles.dayPillText}>General</Text>
+              </View>
+            )}
             {isPermission ? (
               <View style={[styles.dayPill, styles.dayPillPermission]}>
                 <Text style={styles.dayPillText}>{day.notes || 'Permission'}</Text>
@@ -288,14 +274,29 @@ function DayCard({ day }) {
           </View>
           <View style={styles.dayCol}>
             <Text style={[styles.dayColValue, isLate && styles.dayColValueLate]}>
-              {day.workingHours || '—'}
+              {day.workingHours && day.workingHours !== '0' ? day.workingHours : '—'}
             </Text>
             <Text style={styles.dayColLabel}>Working HR's</Text>
+          </View>
+          <View style={styles.dayCol}>
+            <Text style={[styles.dayColValue, lateMinutes > 0 && styles.dayColValueLate]}>
+              {lateMinutes > 0 ? formatDuration(lateMinutes) : '—'}
+            </Text>
+            <Text style={styles.dayColLabel}>Late HR's</Text>
           </View>
         </View>
       </View>
     </View>
   );
+}
+
+function formatDuration(minutes) {
+  if (!minutes || minutes <= 0) return '';
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h && m) return `${h}h ${m}m`;
+  if (h) return `${h}h`;
+  return `${m}m`;
 }
 
 function formatTime12(t) {
@@ -310,14 +311,21 @@ function formatTime12(t) {
 
 function formatDateLabel(day) {
   if (!day?.date) return day?.dayLabel || '—';
-  const d = new Date(day.date);
+  // Parse ISO YYYY-MM-DD locally so the day-of-week doesn't drift by a day under
+  // negative-offset timezones (new Date('2026-06-06') is UTC midnight).
+  const parts = String(day.date).split('-');
+  const y = Number(parts[0]);
+  const m = Number(parts[1]);
+  const dd = Number(parts[2]);
+  if (!y || !m || !dd) return day?.dayLabel || '—';
+  const d = new Date(y, m - 1, dd);
   const dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()];
-  return `${dow}, ${pad2(d.getDate())} ${d.getFullYear()}`;
+  return `${dow}, ${pad2(dd)} ${MONTHS_SHORT[m - 1]} ${y}`;
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#F4F1FB' },
-  content: { padding: 12, paddingBottom: 32 },
+  content: { padding: 12, paddingBottom: 110 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   error: { fontSize: 14, color: '#DC2626' },
 
@@ -385,6 +393,7 @@ const styles = StyleSheet.create({
   dayPillGeneral: { backgroundColor: '#DCFCE7' },
   dayPillPermission: { backgroundColor: '#FEE2E2' },
   dayPillLeave: { backgroundColor: '#EF4444' },
+  dayPillLate: { backgroundColor: '#DC2626' },
   dayPillWeekOff: { backgroundColor: '#DB2777' },
   dayPillText: { fontSize: 10, fontWeight: '700', color: '#111827' },
   dayPillTextOn: { fontSize: 10, fontWeight: '700', color: '#FFFFFF' },
