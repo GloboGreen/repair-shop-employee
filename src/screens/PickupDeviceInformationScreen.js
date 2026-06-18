@@ -5,6 +5,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Button, Card } from '../components/rnr';
 import { notify } from '../components/confirm';
 import { uploadMedia } from '../api/media';
+import { normalizeDeviceImageUrl } from '../utils/images';
 
 const SLOTS = [
   { key: 'front', label: 'Front Side', isVideo: false },
@@ -12,19 +13,22 @@ const SLOTS = [
   { key: 'video', label: 'Full Coverage Video', isVideo: true },
 ];
 
-function trackingId(booking) {
-  return booking?.bookingNumber
+function trackingId(booking, params) {
+  return params?.trackingId
+    || booking?.bookingNumber
     || `#${String(booking?.id || '').replace(/[^0-9a-zA-Z]/g, '').slice(0, 12).toUpperCase()}`;
 }
 
-function deviceTitle(booking) {
-  const parts = [];
-  if (booking?.brandName) parts.push(booking.brandName);
-  if (booking?.modelName) parts.push(booking.modelName);
-  const head = parts.join(' ');
-  const specs = [];
-  if (booking?.ramLabel) specs.push(booking.ramLabel);
-  if (booking?.storageLabel) specs.push(booking.storageLabel);
+function deviceTitle(booking, params) {
+  // Wizard-state has priority over the original booking — the pickup person
+  // may have re-picked brand/model upstream, so reading from params first
+  // keeps every wizard screen consistent.
+  const brand = params?.brandName || params?.brand?.name || booking?.brandName;
+  const model = params?.modelName || params?.model?.name || booking?.modelName;
+  const head = [brand, model].filter(Boolean).join(' ');
+  const ramLabel = params?.ramLabel || booking?.ramLabel;
+  const storageLabel = params?.storageLabel || booking?.storageLabel;
+  const specs = [ramLabel, storageLabel].filter(Boolean);
   if (specs.length === 0) return head;
   return head ? `${head} · ${specs.join(' · ')}` : specs.join(' · ');
 }
@@ -35,10 +39,20 @@ function base64ImageUri(raw) {
   return value.startsWith('data:') ? value : `data:image/png;base64,${value}`;
 }
 
-function deviceImageUri(booking) {
-  return booking?.deviceImageUrl
-    || booking?.modelImageUrl
-    || base64ImageUri(booking?.deviceImageBase64 || booking?.modelImageBase64);
+function deviceImageUri(booking, params) {
+  const url = normalizeDeviceImageUrl(
+    params?.modelImageUrl
+      || params?.model?.imageUrl
+      || booking?.deviceImageUrl
+      || booking?.modelImageUrl
+  );
+  if (url) return url;
+  return base64ImageUri(
+    params?.modelImageBase64
+      || params?.model?.imageBase64
+      || booking?.deviceImageBase64
+      || booking?.modelImageBase64
+  );
 }
 
 export default function PickupDeviceInformationScreen({ navigation, route }) {
@@ -47,7 +61,8 @@ export default function PickupDeviceInformationScreen({ navigation, route }) {
   const bookingId = params.bookingId || booking?.id;
   const services = params.services || [];
   const total = services.reduce((sum, s) => sum + (Number(s.price) || 0), 0);
-  const imageUri = deviceImageUri(booking);
+  const imageUri = deviceImageUri(booking, params);
+  const colorText = params.color || booking?.color || null;
 
   const [photos, setPhotos] = useState(() => {
     const p = params.prefillDevicePhotos;
@@ -64,8 +79,7 @@ export default function PickupDeviceInformationScreen({ navigation, route }) {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: slot.isVideo ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: !slot.isVideo,
-        aspect: !slot.isVideo ? [3, 4] : undefined,
+        allowsEditing: false,
         quality: 0.7,
         videoMaxDuration: 30,
       });
@@ -106,12 +120,12 @@ export default function PickupDeviceInformationScreen({ navigation, route }) {
             )}
           </View>
           <View className="ml-3 flex-1">
-            <Text className="text-text-muted text-xs">Tracking ID : <Text className="font-bold text-text">{trackingId(booking)}</Text></Text>
-            {deviceTitle(booking) ? (
-              <Text className="text-text-muted text-xs mt-1">Device : <Text className="font-bold text-text">{deviceTitle(booking)}</Text></Text>
+            <Text className="text-text-muted text-xs">Tracking ID : <Text className="font-bold text-text">{trackingId(booking, params)}</Text></Text>
+            {deviceTitle(booking, params) ? (
+              <Text className="text-text-muted text-xs mt-1">Device : <Text className="font-bold text-text">{deviceTitle(booking, params)}</Text></Text>
             ) : null}
-            {booking?.color ? (
-              <Text className="text-text-muted text-xs mt-1">Color : <Text className="font-bold text-text">{booking.color}</Text></Text>
+            {colorText ? (
+              <Text className="text-text-muted text-xs mt-1">Color : <Text className="font-bold text-text">{colorText}</Text></Text>
             ) : null}
           </View>
         </Card>

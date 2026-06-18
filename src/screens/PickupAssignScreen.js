@@ -28,7 +28,8 @@ const MONTHS = [
 // pre-date the rename.
 const ACTIVE_PICKUP_STATUSES = new Set([
   'PICKUP_PERSON_ASSIGNED', 'PICKUP_ASSIGNED',
-  'PICKUP_ON_THE_WAY', 'REPAIR_ESTIMATE_PROCESSING',
+  'PICKUP_ON_THE_WAY', 'REACHED_CUSTOMER_LOCATION',
+  'REPAIR_ESTIMATE_PROCESSING',
   'DEVICE_PICKED_UP', 'PICKED_UP',
   'REACHED_SHOP',
 ]);
@@ -47,6 +48,14 @@ function nextStatusFor(currentStatus) {
     return { code: 'PICKUP_ON_THE_WAY', label: "I'm On The Way" };
   }
   if (s === 'PICKUP_ON_THE_WAY') {
+    // Reached Customer Location is gated by a 50m radius check around the
+    // customer's saved pickup address (customer_addresses.latitude/longitude).
+    // The `action: 'reachedCustomer'` flag tells advance() to grab the
+    // pickup person's GPS before PATCHing. Backend allows the transition
+    // without GPS if the customer address has no coordinates.
+    return { code: 'REACHED_CUSTOMER_LOCATION', label: 'Reached Customer Location', action: 'reachedCustomer' };
+  }
+  if (s === 'REACHED_CUSTOMER_LOCATION') {
     return { code: 'REPAIR_ESTIMATE_PROCESSING', label: 'Repair Estimate', action: 'estimate' };
   }
   if (s === 'REPAIR_ESTIMATE_PROCESSING' || s === 'ESTIMATE_SUBMITTED') {
@@ -69,6 +78,7 @@ function currentStatusLabel(status) {
   if (s === 'PICKUP_PERSON_ASSIGNED' || s === 'PICKUP_ASSIGNED') return 'Assigned';
   if (s === 'PICKUP_REASSIGNED') return 'Re-Assigned';
   if (s === 'PICKUP_ON_THE_WAY') return 'On The Way';
+  if (s === 'REACHED_CUSTOMER_LOCATION') return 'At Customer';
   if (s === 'REPAIR_ESTIMATE_PROCESSING' || s === 'ESTIMATE_SUBMITTED') return 'Estimate Submitted';
   if (s === 'DEVICE_PICKED_UP' || s === 'PICKED_UP') return 'Picked Up';
   if (s === 'REACHED_SHOP') return 'Reached Shop';
@@ -171,18 +181,21 @@ export default function PickupAssignScreen({ navigation }) {
     if (!ok) return;
     setAdvancingId(booking.id);
     try {
-      // Reached Shop is gated by the backend on a 50m radius check against
-      // the shop's stored coordinates — fetch the pickup person's current
-      // GPS reading and ship it with the PATCH. Skip this step for every
-      // other transition (no extra permission prompt).
+      // Both REACHED_SHOP and REACHED_CUSTOMER_LOCATION are gated by the
+      // backend on a 50m radius check (against shop coords / customer
+      // pickup address coords respectively) — fetch the pickup person's
+      // current GPS reading and ship it with the PATCH. Skip this step
+      // for every other transition (no extra permission prompt).
       let extras = {};
-      if (next.action === 'reached') {
+      const needsGps = next.action === 'reached' || next.action === 'reachedCustomer';
+      if (needsGps) {
         try {
           const { latitude, longitude } = await readPickupPersonLocation();
           extras = { latitude, longitude };
         } catch (locErr) {
+          const where = next.action === 'reachedCustomer' ? 'Reached Customer Location' : 'Reached Shop';
           notify('Location needed',
-            locErr?.message || 'Turn on location and try again to mark Reached Shop.');
+            locErr?.message || `Turn on location and try again to mark ${where}.`);
           return;
         }
       }
@@ -194,13 +207,15 @@ export default function PickupAssignScreen({ navigation }) {
     } catch (e) {
       // Backend returns 422 + structured payload when the radius check fails
       // so the user knows how far off they are. Surface the server message
-      // verbatim (it already includes the distance).
+      // verbatim (it already includes the distance). Tailor titles per
+      // action so the user knows which place they were too far from.
       const payload = e?.payload || {};
       const code = payload.code;
+      const customerStep = next.action === 'reachedCustomer';
       if (code === 'OUT_OF_RADIUS') {
-        notify('Not at shop yet',
+        notify(customerStep ? 'Not at customer yet' : 'Not at shop yet',
           payload.message
-            || `You are ${payload.distanceMeters || '?'}m away. Please reach the shop to continue.`);
+            || `You are ${payload.distanceMeters || '?'}m away. Please reach the ${customerStep ? 'customer address' : 'shop'} to continue.`);
       } else if (code === 'LOCATION_REQUIRED') {
         notify('Location needed', payload.message || 'Enable location and try again.');
       } else if (code === 'SHOP_LOCATION_MISSING') {

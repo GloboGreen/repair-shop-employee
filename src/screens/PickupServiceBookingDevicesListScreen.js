@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Button, Card } from '../components/rnr';
 import { notify } from '../components/confirm';
 import { submitPickupRepairEstimate } from '../api/pickups';
+import { normalizeDeviceImageUrl } from '../utils/images';
 
 function trackingId(booking, params) {
   return params?.trackingId
@@ -27,30 +28,9 @@ function deviceTitle(booking, params) {
   return head ? `${head} · ${specs.join(' · ')}` : specs.join(' · ');
 }
 
-// Backend submitRepairEstimate only persists estimate amount, photos, and
-// issueSummary on repair_bookings. Stash the rich structured data (services,
-// IMEI, lock, missing parts, durations) as a JSON appendix inside issueSummary
-// so nothing is lost until the schema is extended.
-function buildIssueSummary(params) {
-  const lines = [];
-  if (params.complaint) lines.push(params.complaint.trim());
-  const extras = {
-    imei: params.imei || null,
-    services: (params.services || []).map((s) => ({
-      code: s.serviceCode || null,
-      name: s.serviceName || null,
-      price: Number(s.price) || 0,
-      warranty: s.warranty || null,
-    })),
-    estimatedReadyAt: params.estimatedReadyIso || null,
-    estimatedDeliveryAt: params.estimatedDeliveryIso || null,
-    customerApproved: params.customerApproved ?? null,
-    lock: params.lock || null,
-    missingParts: params.missingParts || [],
-  };
-  lines.push(`---PICKUP_ESTIMATE_META---${JSON.stringify(extras)}`);
-  return lines.join('\n');
-}
+// Backend now persists imei + schedule + device_pin + missing parts + customer
+// approval in dedicated repair_bookings columns, and services in
+// repair_booking_services. issueSummary stays clean — just the complaint text.
 
 function base64ImageUri(raw) {
   if (!raw) return null;
@@ -59,11 +39,19 @@ function base64ImageUri(raw) {
 }
 
 function deviceImageUri(booking, params) {
-  return params?.modelImageUrl
-    || params?.model?.imageUrl
-    || booking?.deviceImageUrl
-    || booking?.modelImageUrl
-    || base64ImageUri(params?.modelImageBase64 || params?.model?.imageBase64 || booking?.deviceImageBase64 || booking?.modelImageBase64);
+  const url = normalizeDeviceImageUrl(
+    params?.modelImageUrl
+      || params?.model?.imageUrl
+      || booking?.deviceImageUrl
+      || booking?.modelImageUrl
+  );
+  if (url) return url;
+  return base64ImageUri(
+    params?.modelImageBase64
+      || params?.model?.imageBase64
+      || booking?.deviceImageBase64
+      || booking?.modelImageBase64
+  );
 }
 
 export default function PickupServiceBookingDevicesListScreen({ navigation, route }) {
@@ -82,12 +70,39 @@ export default function PickupServiceBookingDevicesListScreen({ navigation, rout
     if (!services.length) { notify('Missing services', 'Select at least one repair service.'); return; }
     setSubmitting(true);
     try {
+      // Translate the multi-step flow's locally-shaped state into the keys
+      // submitPickupRepairEstimate actually reads on the backend. Key names
+      // that don't match (devicePin vs lock.value, customerApproval vs
+      // customerApproved, missingDamageParts vs missingParts of partName
+      // shape) silently fall through the COALESCE and leave those columns
+      // NULL on repair_bookings — which is what caused the owner-side
+      // "View Details" to render PIN / missing parts / approval as blank.
+      const devicePin = params.lock && params.lock.type && params.lock.type !== 'NONE'
+        ? (params.lock.value || null)
+        : null;
+      const missingPartsCsv = Array.isArray(params.missingParts)
+        ? params.missingParts
+            .map((p) => {
+              const name = p?.partName || p?.name || p?.label;
+              if (!name) return null;
+              const flags = [];
+              if (p?.missing) flags.push('missing');
+              if (p?.damage) flags.push('damaged');
+              return flags.length ? `${name} (${flags.join(', ')})` : name;
+            })
+            .filter(Boolean)
+            .join(', ')
+        : null;
+      const customerApprovalValue = params.customerApproved == null
+        ? null
+        : (params.customerApproved ? 'DONE' : 'PENDING');
+
       const body = {
         estimatedRepairValue: total,
         frontImageUrl: photos.front || null,
         backImageUrl: photos.back || null,
         videoUrl: photos.video || null,
-        issueSummary: buildIssueSummary(params),
+        issueSummary: params.complaint ? params.complaint.trim() : null,
         // Pickup-person-confirmed device taxonomy. Backend persists these
         // onto repair_bookings (brand_id / model_id / ram_option_id /
         // storage_option_id / color) so subsequent screens — and the
@@ -97,15 +112,16 @@ export default function PickupServiceBookingDevicesListScreen({ navigation, rout
         ramOptionId: params.ramOptionId || null,
         storageOptionId: params.storageOptionId || null,
         color: colorText,
-        // Extra fields — backend ignores unknown keys today, but persists them
-        // if/when the controller is extended.
-        imei: params.imei || null,
+        // Repair-services list — backend DELETE-then-INSERTs repair_booking_services
+        // from this array (see PickupBookingController.submitRepairEstimate).
         services,
-        lock: params.lock || null,
-        missingParts: params.missingParts || [],
+        imei: params.imei || null,
+        // Schedule + device-condition fields — match the names backend reads.
         estimatedReadyAt: params.estimatedReadyIso || null,
         estimatedDeliveryAt: params.estimatedDeliveryIso || null,
-        customerApproved: params.customerApproved ?? null,
+        devicePin,
+        missingDamageParts: missingPartsCsv,
+        customerApproval: customerApprovalValue,
       };
       await submitPickupRepairEstimate(bookingId, body);
       notify('Estimate submitted', 'Repair estimate saved for this booking.');

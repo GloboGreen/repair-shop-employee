@@ -11,6 +11,7 @@ import {
 import { Button, Card } from '../components/rnr';
 import { notify } from '../components/confirm';
 import { listColors, listRamOptions, listStorageOptions } from '../api/master';
+import { normalizeDeviceImageUrl } from '../utils/images';
 
 function trackingId(booking) {
   return booking?.bookingNumber
@@ -39,7 +40,7 @@ function storageLabelFor(opt) {
 }
 
 function modelImageUri(params) {
-  const url = params?.modelImageUrl || params?.model?.imageUrl;
+  const url = normalizeDeviceImageUrl(params?.modelImageUrl || params?.model?.imageUrl);
   if (url) return url;
   const b64 = params?.modelImageBase64 || params?.model?.imageBase64;
   if (!b64) return null;

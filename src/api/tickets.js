@@ -11,6 +11,14 @@ export async function getTicket(ticketId) {
   return ticketApi.get(`/tickets/${ticketId}`);
 }
 
+// Technician's explicit Accept. Backend sets tickets.technician_accepted_at
+// to now() and emits TECHNICIAN_ACCEPTED_SERVICE + TECHNICIAN_WORK_STARTED
+// to the customer/owner timeline. Walk-in tickets at CREATED also have their
+// status bumped to IN_DIAGNOSIS server-side. Idempotent.
+export async function acceptTicket(ticketId) {
+  return ticketApi.post(`/tickets/${ticketId}/accept`);
+}
+
 // Booking timeline for a ticket, used by the Ticket Detail screen to derive
 // the current work-status dropdown label from the most recently emitted event.
 export async function listTicketEvents(ticketId) {
@@ -36,8 +44,13 @@ export async function setTechnicianPhotos(ticketId, photoUrls) {
   });
 }
 
-export async function addRepairNote(ticketId, { note, isInternal } = {}) {
-  return ticketApi.post(`/tickets/${ticketId}/notes`, { body: { note, isInternal } });
+export async function addRepairNote(
+  ticketId,
+  { note, isInternal, audioUrl, imageUrls } = {},
+) {
+  return ticketApi.post(`/tickets/${ticketId}/notes`, {
+    body: { note, isInternal, audioUrl, imageUrls },
+  });
 }
 
 export async function listRepairNotes(ticketId) {

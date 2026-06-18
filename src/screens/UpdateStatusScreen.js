@@ -1,9 +1,18 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ticketApi } from '../api/client';
+import { notify } from '../components/confirm';
 
-const STATUS_OPTIONS = ['CREATED', 'IN_DIAGNOSIS', 'QUOTED', 'APPROVED', 'IN_REPAIR', 'READY', 'DELIVERED', 'CANCELLED'];
+// Lifecycle ladder — must match TicketService.LIFECYCLE_ORDER on the backend.
+// The post-READY billing/handover substages (INVOICE_GENERATED, INVOICE_READY,
+// DELIVERED_PROCESSING) sit between READY and DELIVERED so a Ready ticket
+// can't jump straight to Delivered without the invoice + handover steps.
+const STATUS_OPTIONS = [
+  'CREATED', 'IN_DIAGNOSIS', 'QUOTED', 'APPROVED', 'IN_REPAIR',
+  'READY', 'INVOICE_GENERATED', 'INVOICE_READY', 'DELIVERED_PROCESSING',
+  'DELIVERED', 'CANCELLED',
+];
 
 export default function UpdateStatusScreen({ route, navigation }) {
   const { ticketId } = route.params || {};
@@ -14,9 +23,10 @@ export default function UpdateStatusScreen({ route, navigation }) {
     setSubmitting(status);
     try {
       await ticketApi.patch(`/tickets/${ticketId}/status`, { query: { status } });
-      Alert.alert('Done', 'Status updated', [{ text: 'OK', onPress: () => navigation.goBack() }]);
+      notify('Done', 'Status updated', { preset: 'done' });
+      navigation.goBack();
     } catch (e) {
-      Alert.alert('Error', e.message || 'Failed to update status');
+      notify('Error', e.message || 'Failed to update status', { preset: 'error', haptic: 'error' });
     } finally {
       setSubmitting(null);
     }

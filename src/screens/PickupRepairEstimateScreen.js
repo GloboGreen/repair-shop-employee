@@ -49,6 +49,18 @@ export default function PickupRepairEstimateScreen({ route, navigation }) {
   const [submitting, setSubmitting] = useState(false);
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState(booking?.issueSummary || '');
+  // Service Schedule alert (ETA + delivery) — pickup person enters at the
+  // customer's location while collecting the device. Once submitted, the
+  // shop owner's Booking Details screen reads these instead of showing
+  // "Not yet set" + the "Complete Device Details" prompt.
+  const [etaHours, setEtaHours] = useState('48');
+  const [deliveryHours, setDeliveryHours] = useState('72');
+  // Device condition fields the shop owner used to have to add manually via
+  // "Complete Device Details". Now captured at pickup time so the booking
+  // detail screens have a full snapshot the moment the device hits the shop.
+  const [devicePin, setDevicePin] = useState('');
+  const [missingParts, setMissingParts] = useState('');
+  const [customerApproved, setCustomerApproved] = useState(false);
   const [slots, setSlots] = useState(() => SLOT_DEFS.map((def) => {
     const prefill = hasPrefill ? prefillImages.find((p) => p.key === def.key) : null;
     if (prefill) {
@@ -75,6 +87,21 @@ export default function PickupRepairEstimateScreen({ route, navigation }) {
       setEstimate(data);
       setAmount(data?.estimateAmount != null ? String(data.estimateAmount) : (booking?.estimateAmount ? String(booking.estimateAmount) : ''));
       setNote(data?.issueSummary || booking?.issueSummary || '');
+      // Re-hydrate the schedule + condition fields if the pickup person
+      // already submitted them once (estimate endpoint is idempotent — they
+      // may be coming back to edit). Hours-from-now is derived from the
+      // saved ISO timestamps so the spinner is still relative-to-now.
+      if (data?.estimatedReadyAt) {
+        const hrs = Math.max(1, Math.round((new Date(data.estimatedReadyAt).getTime() - Date.now()) / 3600000));
+        setEtaHours(String(hrs));
+      }
+      if (data?.estimatedDeliveryAt) {
+        const hrs = Math.max(1, Math.round((new Date(data.estimatedDeliveryAt).getTime() - Date.now()) / 3600000));
+        setDeliveryHours(String(hrs));
+      }
+      if (data?.devicePin || data?.deviceSecurityValue) setDevicePin(data.devicePin || data.deviceSecurityValue || '');
+      if (data?.missingDamageParts) setMissingParts(String(data.missingDamageParts));
+      if (data?.customerApproval === 'DONE' || data?.customerApproval === true) setCustomerApproved(true);
       setSlots(SLOT_DEFS.map((def) => {
         // Prefer locally-picked prefill over backend URLs — the upload step
         // happens before the estimate is persisted, so backend won't have it.
@@ -166,9 +193,23 @@ export default function PickupRepairEstimateScreen({ route, navigation }) {
         if (!url) throw new Error('Upload returned no URL');
         uploaded[slot.key] = url;
       }
+      // Convert hours-from-now into ISO timestamps the backend expects.
+      // A blank or non-numeric value drops the field entirely so the
+      // backend's COALESCE keeps whatever was already on the booking.
+      const etaIso = etaHours && !Number.isNaN(Number(etaHours))
+        ? new Date(Date.now() + Number(etaHours) * 3600000).toISOString()
+        : undefined;
+      const deliveryIso = deliveryHours && !Number.isNaN(Number(deliveryHours))
+        ? new Date(Date.now() + Number(deliveryHours) * 3600000).toISOString()
+        : undefined;
       await submitPickupRepairEstimate(bookingId, {
         estimatedRepairValue: cleanedAmount,
         issueSummary: note,
+        estimatedReadyAt: etaIso,
+        estimatedDeliveryAt: deliveryIso,
+        devicePin: devicePin || undefined,
+        missingDamageParts: missingParts || undefined,
+        customerApproval: customerApproved ? 'DONE' : 'PENDING',
         ...uploaded,
       });
       notify('Estimate submitted', 'Repair estimate saved for this booking.');
@@ -252,6 +293,88 @@ export default function PickupRepairEstimateScreen({ route, navigation }) {
             placeholderTextColor="#94A3B8"
             style={styles.noteInput}
           />
+        </View>
+
+        {/* Service Schedule Alert — pickup person commits the ETA and
+            delivery window so the shop owner doesn't have to fill them in
+            on the "Complete Device Details" screen after receiving the
+            device. Hours-from-now keeps the input one-tap-friendly
+            without needing a native date picker dependency. */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Service Schedule Alert</Text>
+          <View style={styles.row}>
+            <View style={styles.rowItem}>
+              <Text style={styles.rowLabel}>Approx. Ready</Text>
+              <View style={styles.hoursBox}>
+                <TextInput
+                  value={etaHours}
+                  onChangeText={setEtaHours}
+                  keyboardType="number-pad"
+                  placeholder="48"
+                  placeholderTextColor="#94A3B8"
+                  style={styles.hoursInput}
+                />
+                <Text style={styles.hoursSuffix}>hrs</Text>
+              </View>
+            </View>
+            <View style={styles.rowItem}>
+              <Text style={styles.rowLabel}>Delivery</Text>
+              <View style={styles.hoursBox}>
+                <TextInput
+                  value={deliveryHours}
+                  onChangeText={setDeliveryHours}
+                  keyboardType="number-pad"
+                  placeholder="72"
+                  placeholderTextColor="#94A3B8"
+                  style={styles.hoursInput}
+                />
+                <Text style={styles.hoursSuffix}>hrs</Text>
+              </View>
+            </View>
+          </View>
+          <Text style={styles.hint}>From now. Leave blank to keep current.</Text>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Device Security</Text>
+          <TextInput
+            value={devicePin}
+            onChangeText={setDevicePin}
+            placeholder="PIN / Pattern (optional)"
+            placeholderTextColor="#94A3B8"
+            style={styles.lineInput}
+            autoCapitalize="none"
+          />
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Missing / Damage Parts</Text>
+          <TextInput
+            value={missingParts}
+            onChangeText={setMissingParts}
+            multiline
+            placeholder="Comma-separated. Leave blank if none."
+            placeholderTextColor="#94A3B8"
+            style={styles.noteInput}
+          />
+        </View>
+
+        <View style={styles.section}>
+          <Pressable
+            onPress={() => setCustomerApproved((v) => !v)}
+            style={styles.approvalRow}
+            hitSlop={6}
+          >
+            <View style={[styles.checkbox, customerApproved && styles.checkboxOn]}>
+              {customerApproved ? <Ionicons name="checkmark" size={14} color="#FFFFFF" /> : null}
+            </View>
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={styles.approvalTitle}>Customer Repair Approval</Text>
+              <Text style={styles.approvalHint}>
+                {customerApproved ? 'Customer has approved the repair estimate.' : 'Tap once the customer confirms verbally.'}
+              </Text>
+            </View>
+          </Pressable>
         </View>
 
         <Pressable
@@ -365,4 +488,44 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   submitText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
+  row: { flexDirection: 'row', marginHorizontal: -4 },
+  rowItem: { flex: 1, paddingHorizontal: 4 },
+  rowLabel: { fontSize: 11, color: '#64748B', fontWeight: '700', marginBottom: 6 },
+  hoursBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 10,
+  },
+  hoursInput: { flex: 1, height: 40, fontSize: 14, fontWeight: '700', color: '#111827' },
+  hoursSuffix: { fontSize: 11, color: '#64748B', fontWeight: '700', marginLeft: 4 },
+  hint: { fontSize: 10, color: '#94A3B8', marginTop: 6, fontStyle: 'italic' },
+  lineInput: {
+    height: 42,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    color: '#111827',
+    backgroundColor: '#F8FAFC',
+    fontSize: 13,
+  },
+  approvalRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: '#94A3B8',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  checkboxOn: { backgroundColor: '#16A34A', borderColor: '#16A34A' },
+  approvalTitle: { fontSize: 13, fontWeight: '800', color: '#111827' },
+  approvalHint: { fontSize: 11, color: '#64748B', marginTop: 2 },
 });

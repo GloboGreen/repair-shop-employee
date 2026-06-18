@@ -40,6 +40,7 @@ const STATUS_LABEL = {
   PICKUP_ASSIGNED: 'Assigned',
   PICKUP_REASSIGNED: 'Re-Assigned',
   PICKUP_ON_THE_WAY: 'On The Way',
+  REACHED_CUSTOMER_LOCATION: 'Reached Customer',
   REPAIR_ESTIMATE_PROCESSING: 'Estimate Processing',
   ESTIMATE_SUBMITTED: 'Estimate Submitted',
   DEVICE_PICKED_UP: 'Picked Up',
@@ -158,11 +159,11 @@ export default function PickupReportScreen({ navigation }) {
   };
 
   const openDetails = (b) => {
-    // Pickup detail = the active task screen for this pickup. It's the same
-    // screen the pickup person uses to drive the workflow, so reopening it
-    // here lets them pick the task back up without hunting through the
-    // dashboard.
-    navigation.navigate('PickupAssign', { focusBookingId: b.id });
+    // Read-only estimate details: device info, customer, price summary, plus
+    // quick actions to jump to Edit Estimate or Pickup History. Keeps the
+    // active workflow (PickupAssign) reserved for the pickup person actually
+    // driving the booking forward.
+    navigation.navigate('PickupEstimateDetail', { booking: b, bookingId: b.id });
   };
   const openHistory = (b) => {
     navigation.navigate('PickupHistory', { booking: b });

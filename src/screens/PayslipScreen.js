@@ -6,7 +6,6 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -15,6 +14,7 @@ import { useSelector } from 'react-redux';
 import { ticketApi, shopApi } from '../api/client';
 import { selectShopId, selectSession } from '../store/authSlice';
 import { useTechnicianId } from '../auth/useTechnicianId';
+import { notify } from '../components/confirm';
 
 // Lazy-load native PDF deps so a missing install doesn't crash the whole bundle.
 // On web we fall back to window.open/window.print which doesn't need expo-print.
@@ -279,7 +279,7 @@ export default function PayslipScreen({ route }) {
     if (typeof window === 'undefined') return false;
     const w = window.open('', '_blank');
     if (!w) {
-      Alert.alert('Pop-up blocked', 'Allow pop-ups for this site to download/share the pay slip.');
+      notify('Pop-up blocked', 'Allow pop-ups for this site to download/share the pay slip.', { preset: 'error' });
       return true;
     }
     w.document.open();
@@ -291,7 +291,7 @@ export default function PayslipScreen({ route }) {
 
   const onDownload = async () => {
     if (!data) {
-      Alert.alert('No payslip', 'There is no payslip to download for this month.');
+      notify('No payslip', 'There is no payslip to download for this month.');
       return;
     }
     setBusy('download');
@@ -303,15 +303,12 @@ export default function PayslipScreen({ route }) {
       }
       const Print = getPrintModule();
       if (!Print) {
-        Alert.alert(
-          'PDF module not installed',
-          'Run `npm install --legacy-peer-deps expo-print expo-sharing`, then restart Metro with `npx expo start --clear`.'
-        );
+        notify('PDF module not installed', 'Run `npm install --legacy-peer-deps expo-print expo-sharing`, then restart Metro with `npx expo start --clear`.', { preset: 'error' });
         return;
       }
       await Print.printAsync({ html });
     } catch (e) {
-      Alert.alert('Could not open print dialog', e?.message || 'Please try again.');
+      notify('Could not open print dialog', e?.message || 'Please try again.', { preset: 'error' });
     } finally {
       setBusy(null);
     }
@@ -319,7 +316,7 @@ export default function PayslipScreen({ route }) {
 
   const onShare = async () => {
     if (!data) {
-      Alert.alert('No payslip', 'There is no payslip to share for this month.');
+      notify('No payslip', 'There is no payslip to share for this month.');
       return;
     }
     setBusy('share');
@@ -332,16 +329,13 @@ export default function PayslipScreen({ route }) {
       const Print = getPrintModule();
       const Sharing = getSharingModule();
       if (!Print) {
-        Alert.alert(
-          'PDF module not installed',
-          'Run `npm install --legacy-peer-deps expo-print expo-sharing`, then restart Metro with `npx expo start --clear`.'
-        );
+        notify('PDF module not installed', 'Run `npm install --legacy-peer-deps expo-print expo-sharing`, then restart Metro with `npx expo start --clear`.', { preset: 'error' });
         return;
       }
       const { uri } = await Print.printToFileAsync({ html, base64: false });
       const isAvailable = Sharing ? await Sharing.isAvailableAsync() : false;
       if (!isAvailable) {
-        Alert.alert('Sharing unavailable', `PDF saved to: ${uri}`);
+        notify('Sharing unavailable', `PDF saved to: ${uri}`);
         return;
       }
       await Sharing.shareAsync(uri, {
@@ -350,7 +344,7 @@ export default function PayslipScreen({ route }) {
         dialogTitle: `Pay Slip — ${MONTHS_FULL[month - 1]} ${year}`,
       });
     } catch (e) {
-      Alert.alert('Could not share', e?.message || 'Please try again.');
+      notify('Could not share', e?.message || 'Please try again.', { preset: 'error' });
     } finally {
       setBusy(null);
     }

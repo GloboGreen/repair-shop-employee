@@ -3,6 +3,7 @@ import { ActivityIndicator, FlatList, Image, Pressable, Text, View } from 'react
 import { Check, Smartphone } from 'lucide-react-native';
 import { Card, SearchBar } from '../components/rnr';
 import { listModelsForBrand } from '../api/master';
+import { normalizeDeviceImageUrl } from '../utils/images';
 
 function trackingId(booking) {
   return booking?.bookingNumber
@@ -11,7 +12,8 @@ function trackingId(booking) {
 
 function modelImageUri(model) {
   if (!model) return null;
-  if (model.imageUrl) return model.imageUrl;
+  const url = normalizeDeviceImageUrl(model.imageUrl);
+  if (url) return url;
   const b64 = model.imageBase64;
   if (!b64) return null;
   return String(b64).startsWith('data:') ? b64 : `data:image/png;base64,${b64}`;

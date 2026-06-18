@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, TextInput, Pressable, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Button, Card, Checkbox, FormField, Select } from '../components/rnr';
+import { normalizeDeviceImageUrl } from '../utils/images';
 
 const DURATIONS = [1, 2, 3, 4, 5, 6, 8, 12, 24, 48].map((h) => ({ value: h, label: `${h} - Hr` }));
 
@@ -43,11 +44,19 @@ function base64ImageUri(raw) {
 }
 
 function deviceImageUri(booking, params) {
-  return params?.modelImageUrl
-    || params?.model?.imageUrl
-    || booking?.deviceImageUrl
-    || booking?.modelImageUrl
-    || base64ImageUri(params?.modelImageBase64 || params?.model?.imageBase64 || booking?.deviceImageBase64 || booking?.modelImageBase64);
+  const url = normalizeDeviceImageUrl(
+    params?.modelImageUrl
+      || params?.model?.imageUrl
+      || booking?.deviceImageUrl
+      || booking?.modelImageUrl
+  );
+  if (url) return url;
+  return base64ImageUri(
+    params?.modelImageBase64
+      || params?.model?.imageBase64
+      || booking?.deviceImageBase64
+      || booking?.modelImageBase64
+  );
 }
 
 export default function PickupServicePriceEstimateScreen({ navigation, route }) {
@@ -59,8 +68,26 @@ export default function PickupServicePriceEstimateScreen({ navigation, route }) 
   const [now] = useState(() => new Date());
   const [imei, setImei] = useState(params.prefillImei || '');
   const [complaint, setComplaint] = useState(params.prefillComplaint || booking?.issueSummary || '');
-  const [duration, setDuration] = useState(2);
-  const [approval, setApproval] = useState(false);
+  // Derive the initial duration from the previously-saved schedule when the
+  // pickup person re-enters the wizard from Edit Repair Estimate. Pick the
+  // closest entry in DURATIONS so the Select component reflects a real option.
+  const [duration, setDuration] = useState(() => {
+    const readyIso = params.prefillEstimatedReadyIso;
+    const deliveryIso = params.prefillEstimatedDeliveryIso;
+    if (!readyIso || !deliveryIso) return 2;
+    const ready = new Date(readyIso).getTime();
+    const delivery = new Date(deliveryIso).getTime();
+    if (!Number.isFinite(ready) || !Number.isFinite(delivery) || delivery <= ready) return 2;
+    const hrs = (delivery - ready) / 3600000;
+    let best = DURATIONS[0].value;
+    let diff = Math.abs(hrs - best);
+    for (const opt of DURATIONS) {
+      const d = Math.abs(hrs - opt.value);
+      if (d < diff) { best = opt.value; diff = d; }
+    }
+    return best;
+  });
+  const [approval, setApproval] = useState(() => !!params.prefillCustomerApproved);
 
   const dateLabel = formatDate(now);
   const timeLabel = formatTime(now);

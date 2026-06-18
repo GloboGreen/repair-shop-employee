@@ -8,7 +8,6 @@ import {
   Image,
   ActivityIndicator,
   RefreshControl,
-  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -17,6 +16,7 @@ import {
   listMyKycDocuments,
   deleteMyKycDocument,
 } from '../api/technicianKyc';
+import { confirm, notify } from '../components/confirm';
 
 const ORDER = ['aadharFront', 'aadharBack', 'pan'];
 const TITLES = {
@@ -70,29 +70,23 @@ export default function TechnicianKycViewScreen({ route, navigation }) {
     navigation.navigate('TechnicianKycUpload', { existing: byType });
   };
 
-  const onDelete = (doc) => {
-    Alert.alert(
-      'Remove document?',
-      `Remove ${doc.title || TITLES[doc.docType] || doc.docType} from your KYC submission?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: async () => {
-            setDeletingType(doc.docType);
-            try {
-              await deleteMyKycDocument(doc.docType);
-              await load(true);
-            } catch (e) {
-              Alert.alert('Failed', e?.message || 'Please try again.');
-            } finally {
-              setDeletingType(null);
-            }
-          },
-        },
-      ]
-    );
+  const onDelete = async (doc) => {
+    const ok = await confirm({
+      title: 'Remove document?',
+      message: `Remove ${doc.title || TITLES[doc.docType] || doc.docType} from your KYC submission?`,
+      confirmText: 'Remove',
+      destructive: true,
+    });
+    if (!ok) return;
+    setDeletingType(doc.docType);
+    try {
+      await deleteMyKycDocument(doc.docType);
+      await load(true);
+    } catch (e) {
+      notify('Failed', e?.message || 'Please try again.', { preset: 'error', haptic: 'error' });
+    } finally {
+      setDeletingType(null);
+    }
   };
 
   return (

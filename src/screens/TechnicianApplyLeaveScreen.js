@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
-  Alert,
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -15,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { applyEmployeeLeave } from '../api/technician';
 import { uploadMedia } from '../api/media';
+import { notify } from '../components/confirm';
 
 // Whitelist mirrors ALLOWED_LEAVE_TYPES on the backend. Order is the order
 // shown in the chip row. HALF_DAY auto-locks the date range to a single
@@ -79,7 +79,7 @@ export default function TechnicianApplyLeaveScreen({ navigation }) {
     if (uploading) return;
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert('Permission required', 'Allow photo access to attach a proof image.');
+      notify('Permission required', 'Allow photo access to attach a proof image.');
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -98,7 +98,7 @@ export default function TechnicianApplyLeaveScreen({ navigation }) {
       });
       setAttachment({ uri: asset.uri, url: res?.url, name: asset.fileName || 'Proof.jpg' });
     } catch (e) {
-      Alert.alert('Upload failed', e?.message ?? 'Could not upload attachment');
+      notify('Upload failed', e?.message ?? 'Could not upload attachment', { preset: 'error', haptic: 'error' });
     } finally {
       setUploading(false);
     }
@@ -117,7 +117,7 @@ export default function TechnicianApplyLeaveScreen({ navigation }) {
 
   const handleSubmit = async () => {
     const err = validate();
-    if (err) { Alert.alert('Check the form', err); return; }
+    if (err) { notify('Check the form', err); return; }
     setSaving(true);
     try {
       await applyEmployeeLeave({
@@ -128,15 +128,12 @@ export default function TechnicianApplyLeaveScreen({ navigation }) {
         reason: reason.trim(),
         attachmentUrl: attachment?.url || null,
       });
-      Alert.alert(
-        'Leave request submitted',
-        'Your leave request has been sent to the owner for review.',
-        // Pop back to LeaveReport (or its parent) so the just-applied entry
-        // appears in the list. LeaveReport reloads in its useEffect on focus.
-        [{ text: 'OK', onPress: () => navigation.goBack() }],
-      );
+      notify('Leave request submitted', 'Your leave request has been sent to the owner for review.', { preset: 'done' });
+      // Pop back to LeaveReport (or its parent) so the just-applied entry
+      // appears in the list. LeaveReport reloads in its useEffect on focus.
+      navigation.goBack();
     } catch (e) {
-      Alert.alert('Could not submit', e?.message ?? 'Failed to submit leave request');
+      notify('Could not submit', e?.message ?? 'Failed to submit leave request', { preset: 'error', haptic: 'error' });
     } finally {
       setSaving(false);
     }

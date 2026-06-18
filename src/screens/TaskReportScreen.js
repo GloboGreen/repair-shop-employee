@@ -270,6 +270,10 @@ export default function MonthlySummaryScreen({ navigation }) {
     navigation.navigate('TechnicianTicketDetail', { ticketId: t.id });
   };
 
+  const openHistory = (t) => {
+    navigation.navigate('TechnicianBookingTimeline', { ticketId: t.id });
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView
@@ -305,14 +309,14 @@ export default function MonthlySummaryScreen({ navigation }) {
 
         <Text style={styles.sectionHeader}>Recent Pending</Text>
         {recentPending ? (
-          <TaskCard booking={recentPending} bucket="PENDING" eventKey={eventStatusById[recentPending.id]} onPress={() => openTicket(recentPending)} onRefresh={() => load(true)} refreshing={refreshing} />
+          <TaskCard booking={recentPending} bucket="PENDING" eventKey={eventStatusById[recentPending.id]} onPress={() => openTicket(recentPending)} onHistory={() => openHistory(recentPending)} onRefresh={() => load(true)} refreshing={refreshing} />
         ) : (
           <Text style={styles.empty}>No pending tasks.</Text>
         )}
 
         <Text style={styles.sectionHeader}>In Process</Text>
         {recentInProcess ? (
-          <TaskCard booking={recentInProcess} bucket="IN_PROCESS" eventKey={eventStatusById[recentInProcess.id]} onPress={() => openTicket(recentInProcess)} onRefresh={() => load(true)} refreshing={refreshing} />
+          <TaskCard booking={recentInProcess} bucket="IN_PROCESS" eventKey={eventStatusById[recentInProcess.id]} onPress={() => openTicket(recentInProcess)} onHistory={() => openHistory(recentInProcess)} onRefresh={() => load(true)} refreshing={refreshing} />
         ) : (
           <Text style={styles.empty}>No tasks in progress.</Text>
         )}
@@ -336,7 +340,7 @@ export default function MonthlySummaryScreen({ navigation }) {
           <Text style={styles.empty}>No tasks found.</Text>
         ) : (
           previousCompleted.map((b) => (
-            <TaskCard key={b.id} booking={b} bucket={bucketize(b.status)} eventKey={eventStatusById[b.id]} onPress={() => openTicket(b)} onRefresh={() => load(true)} refreshing={refreshing} />
+            <TaskCard key={b.id} booking={b} bucket={bucketize(b.status)} eventKey={eventStatusById[b.id]} onPress={() => openTicket(b)} onHistory={() => openHistory(b)} onRefresh={() => load(true)} refreshing={refreshing} />
           ))
         )}
       </ScrollView>
@@ -357,7 +361,7 @@ function StatTile({ value, label, hint, icon, bg }) {
   );
 }
 
-function TaskCard({ booking, bucket, eventKey, onPress, onRefresh, refreshing }) {
+function TaskCard({ booking, bucket, eventKey, onPress, onHistory, onRefresh, refreshing }) {
   const isPending = bucket === 'PENDING';
   const isInProcess = bucket === 'IN_PROCESS';
   const isCompleted = bucket === 'COMPLETED';
@@ -417,6 +421,28 @@ function TaskCard({ booking, bucket, eventKey, onPress, onRefresh, refreshing })
             )}
           </TouchableOpacity>
         </View>
+
+        {/* Explicit action row — mirrors the Recent Assign card on TaskAssign.
+            Whole-card tap still opens View Details, but the buttons make the
+            two destinations obvious + give History its own affordance. */}
+        <View style={styles.actionRow}>
+          <TouchableOpacity
+            style={[styles.actionBtn, { backgroundColor: '#3B4FD7' }]}
+            onPress={onPress}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="document-text-outline" size={12} color="#FFFFFF" />
+            <Text style={styles.actionBtnText}>View Details</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.actionBtn, { backgroundColor: '#15803D' }]}
+            onPress={onHistory}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="time-outline" size={12} color="#FFFFFF" />
+            <Text style={styles.actionBtnText}>History</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </TouchableOpacity>
   );
@@ -461,6 +487,13 @@ const styles = StyleSheet.create({
   taskFooter: { fontSize: 10, color: '#9CA3AF', marginTop: 2 },
   taskStatusIcon: { marginLeft: 8 },
   statusBadge: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+
+  actionRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  actionBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 7, borderRadius: 6, gap: 4,
+  },
+  actionBtnText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
 
   empty: { fontSize: 12, color: '#6B7280', textAlign: 'center', paddingVertical: 14 },
 });

@@ -16,6 +16,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { CommonActions } from '@react-navigation/native';
 import { uploadMedia } from '../api/media';
 import { saveMyKycDocuments } from '../api/technicianKyc';
+import { notify } from '../components/confirm';
 
 const DOCS = [
   { key: 'aadharFront', title: 'Aadhar Card Front', required: true, group: 'identity' },
@@ -48,10 +49,7 @@ export default function TechnicianKycUploadScreen({ navigation, route }) {
         ? await ImagePicker.requestCameraPermissionsAsync()
         : await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert(
-          'Permission needed',
-          `Please allow ${fromCamera ? 'camera' : 'photo library'} access to upload.`
-        );
+        notify('Permission needed', `Please allow ${fromCamera ? 'camera' : 'photo library'} access to upload.`);
         return;
       }
       const opts = { quality: 0.8, mediaTypes: ['images'] };
@@ -61,7 +59,7 @@ export default function TechnicianKycUploadScreen({ navigation, route }) {
       if (result.canceled || !result.assets?.[0]?.uri) return;
       setFiles((prev) => ({ ...prev, [key]: result.assets[0] }));
     } catch (e) {
-      Alert.alert('Could not pick image', e?.message || 'Please try again.');
+      notify('Could not pick image', e?.message || 'Please try again.', { preset: 'error' });
     }
   };
 
@@ -96,7 +94,7 @@ export default function TechnicianKycUploadScreen({ navigation, route }) {
       if (!files.aadharFront) missing.push('Aadhar Card Front');
       if (!files.aadharBack)  missing.push('Aadhar Card Back');
       if (!files.pan)         missing.push('PAN Card');
-      Alert.alert('Required documents missing', `Please upload: ${missing.join(', ')}`);
+      notify('Required documents missing', `Please upload: ${missing.join(', ')}`);
       return;
     }
     setSubmitting(true);
@@ -146,27 +144,21 @@ export default function TechnicianKycUploadScreen({ navigation, route }) {
           ? `KYC submitted. Some files saved with local copies and will retry: ${failedTitles.join(', ')}.`
           : 'KYC documents submitted successfully. Admin will review them shortly.';
 
-      Alert.alert('Submitted', successMessage, [
-        {
-          text: 'OK',
-          onPress: () => {
-            // Land on the View screen (with Edit button) so the user sees what
-            // they just uploaded; AccountTab sits underneath so back returns
-            // there instead of looping into the upload stack.
-            navigation.dispatch(
-              CommonActions.reset({
-                index: 1,
-                routes: [
-                  { name: 'AccountTab' },
-                  { name: 'TechnicianKycView', params: { fromSubmit: true } },
-                ],
-              })
-            );
-          },
-        },
-      ]);
+      notify('Submitted', successMessage, { preset: 'done' });
+      // Land on the View screen (with Edit button) so the user sees what they
+      // just uploaded; AccountTab sits underneath so back returns there instead
+      // of looping into the upload stack.
+      navigation.dispatch(
+        CommonActions.reset({
+          index: 1,
+          routes: [
+            { name: 'AccountTab' },
+            { name: 'TechnicianKycView', params: { fromSubmit: true } },
+          ],
+        })
+      );
     } catch (e) {
-      Alert.alert('Submit failed', e?.message || 'Please try again.');
+      notify('Submit failed', e?.message || 'Please try again.', { preset: 'error', haptic: 'error' });
     } finally {
       setSubmitting(false);
     }

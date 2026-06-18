@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ticketApi } from '../api/client';
-import { listMyTickets } from '../api/tickets';
+import { listMyTickets, acceptTicket } from '../api/tickets';
 import { confirm, notify } from '../components/confirm';
 
 const MONTHS = [
@@ -22,11 +22,14 @@ const MONTHS = [
 //   Re-Assign   — newly assigned, awaiting the technician's accept/reject
 //   Recent Assign — already accepted, work in progress or queued
 //
-// CREATED is the just-came-in bucket. Anything past that has been accepted
-// or auto-advanced. Backend doesn't have a dedicated "accepted" flag yet,
-// so we key off the lifecycle status (see TicketService statuses).
-const NEEDS_ACCEPT = new Set(['CREATED']);
-const ACCEPTED_STATUSES = new Set(['IN_DIAGNOSIS', 'QUOTED', 'APPROVED', 'IN_REPAIR', 'READY']);
+// Source of truth for "accepted" is tickets.technician_accepted_at (set by
+// POST /tickets/{id}/accept). A ticket whose status is CREATED with no
+// accept timestamp is the walk-in just-came-in case; pickup-flow tickets
+// mint at IN_DIAGNOSIS with NULL technicianAcceptedAt and also wait here
+// until the tech taps Accept.
+const FINAL_STATUSES = new Set(['DELIVERED', 'CANCELLED']);
+const needsAccept = (t) => !t.technicianAcceptedAt && !FINAL_STATUSES.has(t.status);
+const isAccepted = (t) => !!t.technicianAcceptedAt;
 
 function trackingId(t) {
   return t.trackingId || `CSPEN${String(t.id || '').replace(/[^0-9]/g, '').slice(0, 8) || '——'}`;
@@ -75,11 +78,11 @@ export default function TaskAssignScreen({ navigation }) {
   }, [list, year, month]);
 
   const reassignList = useMemo(
-    () => monthScoped.filter((t) => NEEDS_ACCEPT.has(t.status)),
+    () => monthScoped.filter(needsAccept),
     [monthScoped],
   );
   const recentList = useMemo(
-    () => monthScoped.filter((t) => ACCEPTED_STATUSES.has(t.status)),
+    () => monthScoped.filter(isAccepted),
     [monthScoped],
   );
 
@@ -98,23 +101,42 @@ export default function TaskAssignScreen({ navigation }) {
     setYear(y);
   };
 
-  // Accept moves the ticket from CREATED into IN_DIAGNOSIS (work begins);
-  // Not Accept rejects by cancelling. Both reload to refresh the buckets.
-  // `confirm`/`notify` from components/confirm are cross-platform — Alert.alert
-  // doesn't resolve its button callbacks on Expo Web, which silently broke
-  // both buttons.
-  const updateStatus = async (ticketId, status, confirmMessage) => {
+  // Accept hits the dedicated endpoint (POST /tickets/{id}/accept). Backend
+  // stamps technician_accepted_at, bumps a CREATED ticket to IN_DIAGNOSIS,
+  // and emits TECHNICIAN_ACCEPTED_SERVICE + TECHNICIAN_WORK_STARTED to the
+  // customer/owner timeline. `confirm`/`notify` from components/confirm are
+  // cross-platform — Alert.alert doesn't resolve its button callbacks on
+  // Expo Web, which silently broke both buttons.
+  const handleAccept = async (ticketId) => {
     const proceed = await confirm({
-      title: confirmMessage.title,
-      message: confirmMessage.message,
-      confirmText: confirmMessage.confirmText,
-      destructive: confirmMessage.destructive,
+      title: 'Accept ticket?',
+      message: 'Mark this ticket as accepted and start work.',
+      confirmText: 'Accept',
     });
     if (!proceed) return;
     setActingOn(ticketId);
     try {
-      // Backend expects status as a query param (TicketController#updateStatus uses @RequestParam).
-      await ticketApi.patch(`/tickets/${ticketId}/status`, { query: { status } });
+      await acceptTicket(ticketId);
+      await load(true);
+    } catch (e) {
+      notify('Error', e?.message || 'Could not accept ticket');
+    } finally {
+      setActingOn(null);
+    }
+  };
+
+  // Reject cancels the ticket via the existing status endpoint.
+  const handleReject = async (ticketId) => {
+    const proceed = await confirm({
+      title: 'Decline ticket?',
+      message: 'The ticket will be cancelled. Continue?',
+      confirmText: 'Decline',
+      destructive: true,
+    });
+    if (!proceed) return;
+    setActingOn(ticketId);
+    try {
+      await ticketApi.patch(`/tickets/${ticketId}/status`, { query: { status: 'CANCELLED' } });
       await load(true);
     } catch (e) {
       notify('Error', e?.message || 'Could not update ticket');
@@ -122,18 +144,6 @@ export default function TaskAssignScreen({ navigation }) {
       setActingOn(null);
     }
   };
-
-  const handleAccept = (ticketId) => updateStatus(
-    ticketId,
-    'IN_DIAGNOSIS',
-    { title: 'Accept ticket?', message: 'Mark this ticket as accepted and start diagnosis.', confirmText: 'Accept' },
-  );
-
-  const handleReject = (ticketId) => updateStatus(
-    ticketId,
-    'CANCELLED',
-    { title: 'Decline ticket?', message: 'The ticket will be cancelled. Continue?', confirmText: 'Decline', destructive: true },
-  );
 
   return (
     <View style={styles.safe}>
@@ -199,6 +209,7 @@ export default function TaskAssignScreen({ navigation }) {
               busy={actingOn === t.id}
               variant="recent"
               onView={() => navigation.navigate('TechnicianTicketDetail', { ticketId: t.id })}
+              onHistory={() => navigation.navigate('TechnicianBookingTimeline', { ticketId: t.id })}
             />
           ))
         )}
@@ -219,7 +230,7 @@ function StatTile({ value, label, icon, bg }) {
   );
 }
 
-function TaskCard({ ticket, busy, variant, onAccept, onReject, onView }) {
+function TaskCard({ ticket, busy, variant, onAccept, onReject, onView, onHistory }) {
   const isReassign = variant === 'reassign';
   return (
     <View style={styles.taskCard}>
@@ -258,6 +269,7 @@ function TaskCard({ ticket, busy, variant, onAccept, onReject, onView }) {
             <>
               <ActionButton label="Accepted" bg="#22C55E" disabled />
               <ActionButton label="View Details" bg="#3B4FD7" onPress={onView} />
+              <ActionButton label="History" bg="#15803D" onPress={onHistory} />
             </>
           )}
         </View>
@@ -343,8 +355,8 @@ const styles = StyleSheet.create({
   taskLabelRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 },
   taskLabelMuted: { fontSize: 10, color: '#9CA3AF' },
 
-  taskActions: { flexDirection: 'row', justifyContent: 'center', gap: 10, marginTop: 12 },
-  actionBtn: { paddingHorizontal: 18, paddingVertical: 7, borderRadius: 6, minWidth: 96, alignItems: 'center' },
+  taskActions: { flexDirection: 'row', justifyContent: 'center', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+  actionBtn: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 6, minWidth: 84, alignItems: 'center' },
   actionBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
 
   empty: { fontSize: 12, color: '#6B7280', textAlign: 'center', paddingVertical: 14 },

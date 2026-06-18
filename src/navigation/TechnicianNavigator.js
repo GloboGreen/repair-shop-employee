@@ -26,6 +26,7 @@ const TAB_FOR_ROUTE = {
   PickupAssign: 'Tasks',
   PickupReport: 'Tasks',
   PickupRepairEstimate: 'Tasks',
+  PickupEstimateDetail: 'Tasks',
   PickupHistory: 'Tasks',
   PickupSelectBrand: 'Tasks',
   PickupSelectModel: 'Tasks',
@@ -38,6 +39,7 @@ const TAB_FOR_ROUTE = {
   PickupServiceBookingDevicesList: 'Tasks',
   TechnicianDashboard: 'Tasks',
   TechnicianTicketDetail: 'Tasks',
+  TechnicianBookingTimeline: 'Tasks',
   UpdateStatus: 'Tasks',
   AddRepairNotes: 'Tasks',
   UploadRepairImages: 'Tasks',
@@ -75,6 +77,8 @@ const HIDE_BOTTOM_TAB_ROUTES = new Set([
   // tab bar competes with the Download/Share buttons at the bottom of the page.
   'SalaryReport',
   'Payslip',
+  // Service-history rail has its own gradient hero + back chevron — no tab bar.
+  'TechnicianBookingTimeline',
 ]);
 
 // Tab roots (have their own bottom tab bar — header hidden)
@@ -93,6 +97,7 @@ import TaskReportScreen from '../screens/TaskReportScreen';
 import PickupAssignScreen from '../screens/PickupAssignScreen';
 import PickupReportScreen from '../screens/PickupReportScreen';
 import PickupRepairEstimateScreen from '../screens/PickupRepairEstimateScreen';
+import PickupEstimateDetailScreen from '../screens/PickupEstimateDetailScreen';
 import PickupHistoryScreen from '../screens/PickupHistoryScreen';
 import PickupSelectBrandScreen from '../screens/PickupSelectBrandScreen';
 import PickupSelectModelScreen from '../screens/PickupSelectModelScreen';
@@ -110,6 +115,7 @@ import PayslipScreen from '../screens/PayslipScreen';
 import TechnicianProfileScreen from '../screens/TechnicianProfileScreen';
 import TechnicianDashboardScreen from '../screens/TechnicianDashboardScreen';
 import TechnicianTicketDetailScreen from '../screens/TechnicianTicketDetailScreen';
+import TechnicianBookingTimelineScreen from '../screens/TechnicianBookingTimelineScreen';
 import UpdateStatusScreen from '../screens/UpdateStatusScreen';
 import AddRepairNotesScreen from '../screens/AddRepairNotesScreen';
 import UploadRepairImagesScreen from '../screens/UploadRepairImagesScreen';
@@ -176,6 +182,7 @@ export default function TechnicianNavigator({ session, onLogout }) {
         <Stack.Screen name="PickupAssign" component={PickupAssignScreen} options={{ title: 'Assign Pickup' }} />
         <Stack.Screen name="PickupReport" component={PickupReportScreen} options={{ title: 'Pickup Report' }} />
         <Stack.Screen name="PickupRepairEstimate" component={PickupRepairEstimateScreen} options={{ title: 'Repair Estimate Processing' }} />
+        <Stack.Screen name="PickupEstimateDetail" component={PickupEstimateDetailScreen} options={{ title: 'Estimate Details' }} />
         <Stack.Screen name="PickupHistory" component={PickupHistoryScreen} options={{ title: 'Pickup History' }} />
         <Stack.Screen name="PickupSelectBrand" component={PickupSelectBrandScreen} options={{ title: 'Select Device Brand' }} />
         <Stack.Screen name="PickupSelectModel" component={PickupSelectModelScreen} options={{ title: 'Select Device Model' }} />
@@ -193,6 +200,7 @@ export default function TechnicianNavigator({ session, onLogout }) {
         <Stack.Screen name="TechnicianProfile" component={TechnicianProfileScreen} options={{ title: 'My Profile' }} />
         <Stack.Screen name="TechnicianDashboard" component={TechnicianDashboardScreen} options={{ title: 'Dashboard' }} />
         <Stack.Screen name="TechnicianTicketDetail" component={TechnicianTicketDetailScreen} options={{ title: 'Ticket Detail' }} />
+        <Stack.Screen name="TechnicianBookingTimeline" component={TechnicianBookingTimelineScreen} options={{ headerShown: false }} />
         <Stack.Screen name="UpdateStatus" component={UpdateStatusScreen} options={{ title: 'Update Status' }} />
         <Stack.Screen name="AddRepairNotes" component={AddRepairNotesScreen} options={{ title: 'Add Note' }} />
         <Stack.Screen name="UploadRepairImages" component={UploadRepairImagesScreen} options={{ title: 'Upload Images' }} />

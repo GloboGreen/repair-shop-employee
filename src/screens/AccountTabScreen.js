@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, Pressable, ScrollView, Image, Alert } from 'react-native';
+import { View, Text, Pressable, ScrollView, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSelector } from 'react-redux';
 import { useFocusEffect } from '@react-navigation/native';
@@ -18,7 +18,7 @@ import {
 import { selectSession } from '../store/authSlice';
 import { useLogout } from '../auth/LogoutContext';
 import { getRoleDisplayLabel } from '../config/categories';
-import { confirm } from '../components/confirm';
+import { confirm, notify } from '../components/confirm';
 import { listMyKycDocuments } from '../api/technicianKyc';
 
 function initialsFromName(name) {
@@ -72,7 +72,7 @@ export default function AccountTabScreen({ navigation }) {
     if (ok) onLogout?.();
   };
 
-  const comingSoon = (label) => Alert.alert(label, 'This section is coming soon.');
+  const comingSoon = (label) => notify(label, 'This section is coming soon.');
 
   // Sections give the long list a visual rhythm — the user scans grouped
   // cards faster than a flat list of nine identical rows.

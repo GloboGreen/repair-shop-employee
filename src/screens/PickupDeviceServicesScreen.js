@@ -18,6 +18,7 @@ import {
 } from 'lucide-react-native';
 import { Button, Card } from '../components/rnr';
 import { listAllRepairServices, listRepairCategories } from '../api/master';
+import { normalizeDeviceImageUrl } from '../utils/images';
 
 const WARRANTY_OPTIONS = [
   { code: 'W_3M', label: '3 Months' },
@@ -59,11 +60,19 @@ function base64ImageUri(raw) {
 }
 
 function deviceImageUri(booking, params) {
-  return params?.modelImageUrl
-    || params?.model?.imageUrl
-    || booking?.deviceImageUrl
-    || booking?.modelImageUrl
-    || base64ImageUri(params?.modelImageBase64 || params?.model?.imageBase64 || booking?.deviceImageBase64 || booking?.modelImageBase64);
+  const url = normalizeDeviceImageUrl(
+    params?.modelImageUrl
+      || params?.model?.imageUrl
+      || booking?.deviceImageUrl
+      || booking?.modelImageUrl
+  );
+  if (url) return url;
+  return base64ImageUri(
+    params?.modelImageBase64
+      || params?.model?.imageBase64
+      || booking?.deviceImageBase64
+      || booking?.modelImageBase64
+  );
 }
 
 function normalizePrefillServices(...sources) {

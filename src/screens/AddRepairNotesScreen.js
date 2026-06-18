@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { notify } from '../components/confirm';
 
 export default function AddRepairNotesScreen({ route, navigation }) {
   const { ticketId } = route.params || {};
@@ -12,9 +13,10 @@ export default function AddRepairNotesScreen({ route, navigation }) {
     setSubmitting(true);
     try {
       // POST /tickets/{id}/notes or similar - backend to define
-      Alert.alert('Note added', 'Backend endpoint for notes to be wired.', [{ text: 'OK', onPress: () => navigation.goBack() }]);
+      notify('Note added', 'Backend endpoint for notes to be wired.', { preset: 'done' });
+      navigation.goBack();
     } catch (e) {
-      Alert.alert('Error', e.message || 'Failed');
+      notify('Error', e.message || 'Failed', { preset: 'error', haptic: 'error' });
     } finally {
       setSubmitting(false);
     }

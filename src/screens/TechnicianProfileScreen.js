@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Image,
@@ -17,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { ticketApi } from '../api/client';
 import { uploadMedia } from '../api/media';
+import { notify } from '../components/confirm';
 
 function formatTime(val) {
   if (val == null) return '—';
@@ -65,7 +65,7 @@ export default function TechnicianProfileScreen() {
         defaultCheckOut: data?.defaultCheckOut != null ? formatTime(data.defaultCheckOut) : '18:30',
       });
     } catch (e) {
-      Alert.alert('Error', e?.message ?? 'Failed to load profile');
+      notify('Error', e?.message ?? 'Failed to load profile', { preset: 'error', haptic: 'error' });
     } finally {
       setLoading(false);
     }
@@ -74,7 +74,7 @@ export default function TechnicianProfileScreen() {
   React.useEffect(() => { load(); }, [load]);
 
   const notifyContactOwner = () => {
-    Alert.alert(
+    notify(
       'Locked',
       'Your phone number and email can only be changed by the shop owner. Please contact them to update these details.'
     );
@@ -86,7 +86,7 @@ export default function TechnicianProfileScreen() {
       if (Platform.OS !== 'web') {
         const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!perm.granted) {
-          Alert.alert('Permission required', 'Allow photo library access to update your profile picture.');
+          notify('Permission required', 'Allow photo library access to update your profile picture.');
           return;
         }
       }
@@ -113,7 +113,7 @@ export default function TechnicianProfileScreen() {
       setProfile(updated);
       setForm((p) => ({ ...p, photoUrl: url }));
     } catch (e) {
-      Alert.alert('Upload failed', e?.message ?? 'Could not update photo');
+      notify('Upload failed', e?.message ?? 'Could not update photo', { preset: 'error', haptic: 'error' });
     } finally {
       setUploadingPhoto(false);
     }
@@ -132,7 +132,7 @@ export default function TechnicianProfileScreen() {
       setProfile(updated);
       setEditing(false);
     } catch (e) {
-      Alert.alert('Error', e?.message ?? 'Failed to save');
+      notify('Error', e?.message ?? 'Failed to save', { preset: 'error', haptic: 'error' });
     } finally {
       setSaving(false);
     }
